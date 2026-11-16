@@ -9,6 +9,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '@/theme';
 import { APP_CONFIG, SENSORY_CHANNELS } from '@/constants';
 import { Card, SensoryBadge } from '@/components/common';
+import { NowPlayingCard } from '@/features/playback';
 
 export default function HomeScreen() {
   return (
@@ -25,7 +26,7 @@ export default function HomeScreen() {
             </View>
             <View>
               <Text style={styles.brandTitle}>{APP_CONFIG.name}</Text>
-              <Text style={styles.versionBadge}>v{APP_CONFIG.version} • Foundation Milestone</Text>
+              <Text style={styles.versionBadge}>v{APP_CONFIG.version} • Milestone 2 (Audio Engine)</Text>
             </View>
           </View>
           <Text style={styles.tagline}>{APP_CONFIG.tagline}</Text>
@@ -58,34 +59,20 @@ export default function HomeScreen() {
           </View>
         </Card>
 
-        {/* Music Player Placeholder */}
-        <Card style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <Text style={styles.sectionHeader}>Now Playing</Text>
-            <View style={styles.statusPill}>
-              <Text style={styles.statusPillText}>Ready for Milestone 2</Text>
-            </View>
-          </View>
-          <View style={styles.placeholderContainer}>
-            <Text style={styles.placeholderIcon}>🎵</Text>
-            <Text style={styles.placeholderTitle}>No Track Loaded</Text>
-            <Text style={styles.placeholderSubtitle}>
-              Audio playback engine with real-time multi-sensory sync will be connected in Milestone 2.
-            </Text>
-          </View>
-        </Card>
+        {/* Connected Now Playing Transport Controls */}
+        <NowPlayingCard />
 
         {/* Music Library Placeholder */}
         <Card style={styles.card}>
           <View style={styles.cardHeaderRow}>
             <Text style={styles.sectionHeader}>Music Library</Text>
-            <Text style={styles.counterText}>0 Tracks</Text>
+            <Text style={styles.counterText}>1 Bundled Demo</Text>
           </View>
           <View style={styles.placeholderContainer}>
             <Text style={styles.placeholderIcon}>📂</Text>
-            <Text style={styles.placeholderTitle}>Local Library Empty</Text>
+            <Text style={styles.placeholderTitle}>Local Library</Text>
             <Text style={styles.placeholderSubtitle}>
-              Device file import, ID3 metadata indexing, and offline track storage will be integrated here.
+              Device file import, ID3 metadata indexing, and offline track storage will be integrated in the Library milestone.
             </Text>
           </View>
         </Card>
@@ -178,19 +165,6 @@ const styles = StyleSheet.create({
     fontSize: theme.typography.sizes.md,
     fontWeight: theme.typography.weights.bold,
     color: theme.colors.text.primary,
-  },
-  statusPill: {
-    paddingHorizontal: theme.spacing.sm,
-    paddingVertical: theme.spacing.xxs,
-    backgroundColor: theme.colors.background.highlight,
-    borderRadius: theme.borderRadius.full,
-    borderWidth: 1,
-    borderColor: theme.colors.border.bright,
-  },
-  statusPillText: {
-    fontSize: theme.typography.sizes.xs - 2,
-    color: theme.colors.text.secondary,
-    fontWeight: theme.typography.weights.semibold,
   },
   counterText: {
     fontSize: theme.typography.sizes.xs,

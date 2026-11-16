@@ -57,4 +57,6 @@ export interface PlaybackClock {
   durationMs: number;
   status: PlaybackStatus;
   rate: number;
+  isBuffering: boolean;
+  errorMessage?: string | null;
 }

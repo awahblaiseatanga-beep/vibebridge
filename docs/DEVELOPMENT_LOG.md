@@ -87,4 +87,56 @@
 ---
 
 ### Status
-Phase 2, Milestone 1 is **COMPLETED**. Ready for review.
+Phase 2, Milestone 1 is **COMPLETED**. Initial commit `14addcd` created.
+
+---
+
+### Phase 2, Milestone 2: Audio Playback Engine
+**Date:** 2026-11-17  
+
+#### 1. Dependency Installation
+- Installed `expo-audio@~58.0.12` using `npx expo install expo-audio -- --legacy-peer-deps`.
+- Automatically registered `expo-audio` plugin in `app.json`.
+
+#### 2. Architecture & Engine Implementation
+- Built `src/engines/audio/types.ts` defining strict `AudioEngine`, `AudioSourceInput`, and event listener types.
+- Implemented `src/engines/audio/ExpoAudioEngine.ts`:
+  - Concrete implementation powered by `expo-audio` native bridge (`createAudioPlayer`).
+  - High-precision 50ms update interval for tight cross-sensory timing.
+  - Full transport state machine: `idle` -> `loading` -> `paused` -> `playing` -> `stopped` -> `error`.
+  - Operations implemented: `load()`, `play()`, `pause()`, `resume()`, `stop()`, `seek()`, `unload()`.
+  - Seeking with instant clock synchronization and boundary clamping.
+  - Enforced single authoritative master clock rule: the audio playback position is the single source of truth for all future sensory systems (lyrics, visuals, haptics).
+
+#### 3. Bundled Audio Stem
+- Generated a dedicated 12-second 120 BPM rhythmic demonstration stem at `assets/music/vibebridge_demo.wav` (44.1kHz, 16-bit PCM).
+- Features pronounced kick drum pulses, off-beat snare hits, and harmonic chord progression ideal for accessibility and tactile testing.
+
+#### 4. UI Integration & React Hook
+- Created `src/features/playback/usePlayback.ts`: Decoupled React Hook connecting UI components to the underlying `AudioEngine` singleton without lifecycle leaks.
+- Created `src/features/playback/components/NowPlayingCard.tsx`:
+  - Connected Play, Pause, Resume, Stop, and Seek transport controls.
+  - Real-time progress bar with interactive seek points (`-2s`, `0s`, `50%`, `+2s`).
+  - Authoritative clock telemetry display for real-time validation.
+- Mounted `NowPlayingCard` on `app/index.tsx`.
+
+#### 5. Verification & Testing
+- Automated test suite in `scripts/test-audio-engine.js` covering 11 critical test cases:
+  - Initial state inspection.
+  - Bundled audio asset loading.
+  - Play and resume transitions.
+  - Pause preservation.
+  - Seeking and clamping precision.
+  - Stop and position reset.
+  - Automatic track completion (`didJustFinish`).
+  - Local file URI resolution.
+  - Native error handling.
+  - Unload and resource disposal.
+  - Status: **ALL 11 TESTS PASSED**.
+- TypeScript typecheck (`npm run typecheck`): **PASSED (0 errors)**.
+- Android bundling (`expo export --platform android`): **PASSED (1,151 modules bundled in 1.1s)**.
+
+---
+
+### Status
+Phase 2, Milestone 2 is **COMPLETED**. Ready for review.

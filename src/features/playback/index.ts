@@ -2,12 +2,13 @@
  * Feature: Playback
  *
  * Responsibilities:
- * - Transport controls (Play, Pause, Seek, Stop).
+ * - Transport controls (Play, Pause, Resume, Stop, Seek).
  * - Playback progress bar and timestamp display.
  * - Integration point for audio engine and sensory synchronization.
- *
- * Status: Foundation milestone (Implementation scheduled for Milestone 2).
  */
+
+export * from './usePlayback';
+export * from './components/NowPlayingCard';
 
 export interface PlaybackFeatureConfig {
   autoPlay: boolean;
