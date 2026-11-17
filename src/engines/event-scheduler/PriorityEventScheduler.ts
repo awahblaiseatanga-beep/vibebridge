@@ -334,6 +334,9 @@ export class PriorityEventScheduler implements IEventScheduler {
     this.timerHandle = setInterval(() => {
       this.tick();
     }, this.pollingIntervalMs);
+    if (this.timerHandle && typeof (this.timerHandle as any).unref === 'function') {
+      (this.timerHandle as any).unref();
+    }
   }
 
   /**

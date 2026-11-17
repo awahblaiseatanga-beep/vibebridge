@@ -92,9 +92,21 @@ The engine layer handles real-time processing and hardware control, isolated fro
    - Channel-specific subscriptions (`haptic`, `visual`, `lyrics`) and global event delivery interface.
    - Fully decoupled from UI components and hardware drivers.
 
-4. **`HapticEngine`**:
-   - Directly drives hardware vibration.
-   - Initial implementation uses Expo Haptics (`impactAsync`, `notificationAsync`).
+4. **`HapticEngine` (ExpoHapticEngine — Completed Milestone 4)**:
+   - Dedicated physical tactile actuation engine implementing `IHapticEngine`.
+   - Purely reactive consumer: subscribes to `PriorityEventScheduler`'s `'haptic'` channel with zero independent timers.
+   - Built on `expo-haptics` with an injectable `HapticDriver` abstraction for deterministic unit testing.
+   - Standard tactile pattern vocabulary:
+     - `'heavy'`: Downbeats, heavy bass kicks, sub-bass impacts (`ImpactFeedbackStyle.Heavy`).
+     - `'medium'`: Backbeats, snares, rimshots (`ImpactFeedbackStyle.Medium`).
+     - `'light'`: Hi-hats, subtle rhythm pulses, subdivisions (`ImpactFeedbackStyle.Light`).
+     - `'soft'`: Gentle background rhythm cues (`ImpactFeedbackStyle.Soft`).
+     - `'rigid'`: Sharp accents, staccato hits (`ImpactFeedbackStyle.Rigid`).
+     - `'pulse'`: Notification pulse (`NotificationFeedbackType.Success`).
+     - `'double'`: Double click / selection (`selectionAsync`).
+     - `'silence'`: Rest / muted beat.
+   - **Dynamic Tactile Tier Remapping**: Adapts discrete platform styles to continuous user intensity ($\text{effectiveIntensity} = \text{userIntensity} \times \text{cueWeight}$), dynamically remapping heavy cues to medium/light/soft as intensity decreases. Preset levels (25%, 50%, 75%, 100%) represent logical intensity tiers and do not guarantee corresponding physical vibration amplitude percentages.
+   - **Event-Rate Safeguards**: Enforces a strict 40ms minimum interval (`minIntervalMs = 40`) between consecutive vibration triggers to prevent dense bursts. (Software event-rate guard; does not guarantee physical protection against motor overheating or hardware fatigue).
    - Clean interface allows hot-swapping with a custom Android native module (`VibrationEffect` with amplitude control) if hardware testing demands it.
 
 5. **`VisualEngine`**:

@@ -185,6 +185,7 @@ Phase 2, Milestone 2 is **COMPLETED**. Committed under commit `018af1a`.
 
 ### Phase 2, Milestone 3: Master Synchronization Engine & Latency Compensation
 **Date:** 2026-11-17  
+**Commit:** `d7d5594ec79db14bb092db5d584dc540bb0c3dab`
 
 #### 1. Master Clock Abstraction (`src/engines/synchronization/MasterClock.ts`)
 - Created `AudioMasterClock` implementing `MasterClock`.
@@ -203,11 +204,13 @@ Phase 2, Milestone 2 is **COMPLETED**. Committed under commit `018af1a`.
   - `hapticOffsetMs: 25ms` (Motor acceleration / spin-up lead)
   - `visualOffsetMs: 16ms` (Display composition / rasterization lead)
   - `lyricsOffsetMs: 0ms` (Reading anticipation point)
+- Documented provisional nature of offsets as starting baseline values rather than measured hardware characteristics.
 
 #### 3. Event Scheduler (`src/engines/event-scheduler/PriorityEventScheduler.ts`)
 - Implemented `PriorityEventScheduler` with chronological binary search insertion ($O(\log n)$).
 - Enforces single controlled scheduling loop with lifecycle management (`start()`, `stop()`, `dispose()`).
 - Configurable look-ahead window (`lookAheadWindowMs: 80ms`) and polling interval (`pollingIntervalMs: 20ms`).
+- Implemented explicit late-event policy (`maxLatenessToleranceMs: 50ms`): events within tolerance are dispatched immediately; stale events past tolerance are dropped to prevent burst firing.
 - Duplicate prevention using dispatched ID tracking.
 - Timeline revision invalidation: drops all queued cues from previous revisions on seek or track change.
 - Generic, decoupled event delivery contract emitting `DispatchedEvent` with channel and global subscription filters.
@@ -229,12 +232,72 @@ Phase 2, Milestone 2 is **COMPLETED**. Committed under commit `018af1a`.
   - Track completion boundary enforcement.
   - Multi-consumer fan-out, channel isolation, and unsubscription.
   - Scheduler lifecycle cleanup and disposal.
-  - Status: **ALL 10 TESTS PASSED**.
+  - Late-event handling policy and staleness dropping.
+  - Clamped latency lead time staleness evaluation.
+  - Status: **ALL 12 TESTS PASSED**.
 - Audio Engine test suite (`scripts/test-audio-engine.js`): **ALL 13 TESTS PASSED**.
 - TypeScript strict typecheck (`npm run typecheck`): **PASSED (0 errors)**.
 - Android bundling verification (`expo export --platform android`): **PASSED (1,151 modules bundled in 1.1s)**.
 
 ---
 
+### Phase 2, Milestone 4: FEEL — Haptic Feedback Integration
+**Date:** 2026-11-17  
+
+#### 1. Haptic Engine Abstraction (`src/engines/haptic/`)
+- Created `IHapticEngine` interface and `ExpoHapticEngine` concrete implementation in `src/engines/haptic/ExpoHapticEngine.ts`.
+- Integrated `expo-haptics@~58.0.8` using Expo-compatible dependencies.
+- Designed with dependency injection (`HapticDriver`) enabling 100% deterministic testing in Node.js test environments without native hardware.
+- Subscribes reactively to `PriorityEventScheduler`'s `'haptic'` channel. Operates with **zero independent timers**.
+- Implemented **Dynamic Tactile Tier Remapping**: computes $\text{effectiveIntensity} = \text{userIntensity} \times \text{cueWeight}$ and remaps discrete platform feedback styles (`Heavy` -> `Medium` -> `Light` -> `Soft`). Documented that 25%, 50%, 75%, and 100% settings are logical intensity levels, not guaranteed physical vibration amplitude percentages.
+- Implemented **Event-Rate Safeguards**: enforces a 40ms minimum interval (`minIntervalMs: 40ms`) between consecutive vibration triggers to prevent dense bursts (without claiming physical motor fatigue or overheating guarantees).
+- Implemented suspension of scheduler subscription when haptics are disabled and restoration without duplication upon re-enabling.
+- Implemented pause/resume/seek safety: halts during playback pause or buffering, and drops outdated cues on timeline seek.
+
+#### 2. Bundled 120 BPM Demo Track Rhythmic Score (`src/features/haptics/demoTrackHaptics.ts`)
+- Mapped rhythmic haptic score for `assets/music/vibebridge_demo.wav` (12 seconds, 6 bars of 4/4 at 120 BPM):
+  - 12 downbeat bass kicks (Beats 1 & 3): Heavy impact (`weight: 1.0`)
+  - 12 backbeat snares (Beats 2 & 4): Medium impact (`weight: 0.85`)
+  - 21 off-beat hi-hat subdivisions (eighth notes): Light impact (`weight: 0.5`)
+  - Bar 6 rhythmic fill and final resolution: Rigid accents and Success pulse (`weight: 1.0`)
+- Connected `scheduleDemoTrackHaptics(eventScheduler, timelineRevision)` in `NowPlayingCard` to synchronize cues automatically whenever track loads or timeline revision changes.
+
+#### 3. User Controls & Accessible UI (`src/features/haptics/components/HapticControlCard.tsx`)
+- Created `useHaptics` hook providing reactive state access and control methods.
+- Built accessible `HapticControlCard` component:
+  - Master Enable / Disable toggle switch.
+  - Tactile Intensity selector with presets (25% Gentle, 50% Balanced, 75% Strong, 100% Max).
+  - Real-time sensory feedback indicator displaying active beat type (`KICK`, `SNARE`, `HI-HAT`, `RESOLUTION`).
+  - Tactile test buttons allowing the user to feel sample patterns on demand.
+  - Clear disclosure of motor safeguards and Android hardware differences.
+- Integrated into `app/index.tsx` home screen.
+
+#### 4. Architecture Documentation
+- Recorded ADR-011 (Haptic Feedback Architecture, Dynamic Tactile Scaling, and Motor Safeguards) in `docs/DECISIONS.md`.
+- Documented Android hardware realities: LRA (Linear Resonant Actuator) vs ERM (Eccentric Rotating Mass), motor rise/fall times, thermal throttling, and future native module escape hatch.
+- Updated `docs/TECHNICAL_ARCHITECTURE.md`.
+
+#### 5. Verification & Testing
+- Built comprehensive test suite in `scripts/test-haptic-engine.js`:
+  - Test 1: Initial state & configuration defaults.
+  - Test 2: Master enable/disable toggle strictly gating actuation.
+  - Test 3: Pattern mapping for all 8 tactile types (`heavy`, `medium`, `light`, `soft`, `rigid`, `pulse`, `double`, `silence`).
+  - Test 4: Intensity scaling and dynamic tier remapping.
+  - Test 5: Anti-spam throttling enforcing 40ms motor fatigue limit.
+  - Test 6: PriorityEventScheduler subscription and sensory channel isolation.
+  - Test 7: Timeline revision seeking and pause safety.
+  - Test 8: Bundled 120 BPM demo track score integrity (47 cues).
+  - Test 9: Engine disposal and cleanup.
+  - Status: **ALL 9 TESTS PASSED**.
+- Verification across entire suite (`npm test`):
+  - Audio Engine: **13/13 PASSED**
+  - Synchronization & Event Scheduler: **12/12 PASSED**
+  - Haptic Engine: **9/9 PASSED**
+  - Total: **34/34 UNIT TESTS PASSED**.
+- TypeScript strict typecheck (`npm run typecheck`): **PASSED (0 errors)**.
+- Android bundling verification (`expo export --platform android`): **PASSED (1,168 modules bundled in 7.5s)**.
+
+---
+
 ### Status
-Phase 2, Milestone 3 is **COMPLETED**. Ready for review.
+Phase 2, Milestone 4 is **COMPLETED**. Proposed commit ready for user review and authorization.

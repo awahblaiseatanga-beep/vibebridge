@@ -6,6 +6,7 @@
     "expo": "~58.0.25",
     "expo-audio": "~58.0.12",
     "expo-constants": "~58.0.16",
+    "expo-haptics": "~58.0.8",
     "expo-linking": "~58.0.17",
     "expo-router": "~58.0.31",
     "expo-status-bar": "~58.0.5",
@@ -24,9 +25,10 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/test-audio-engine.js && node scripts/test-synchronization.js",
+    "test": "node scripts/test-audio-engine.js && node scripts/test-synchronization.js && node scripts/test-haptic-engine.js",
     "test:audio": "node scripts/test-audio-engine.js",
-    "test:sync": "node scripts/test-synchronization.js"
+    "test:sync": "node scripts/test-synchronization.js",
+    "test:haptic": "node scripts/test-haptic-engine.js"
   },
   "private": true
 }

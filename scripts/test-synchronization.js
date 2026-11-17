@@ -393,6 +393,7 @@ async function runTests() {
     0,
     'Upfront schedule of stale cue (>50ms in the past while playing) must be discarded immediately'
   );
+  lateScheduler.dispose();
   console.log('  ✓ Late-event policy verified: events within 50ms tolerance dispatched; stale events dropped');
 
   // --- Test 12: Clamped Latency Lead Time Staleness ---
@@ -419,6 +420,7 @@ async function runTests() {
   const clampedDispatched = clampedScheduler.tick(30, 4000);
   assert.strictEqual(clampedDispatched.length, 1);
   assert.strictEqual(clampedDispatched[0].id, 'clamped-fresh');
+  clampedScheduler.dispose();
   console.log('  ✓ Zero-clamped latency triggers correctly evaluated against lateness threshold');
 
   console.log('\n================================================================');

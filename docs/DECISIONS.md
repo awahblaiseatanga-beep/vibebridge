@@ -100,3 +100,19 @@
   $$\text{triggerTimestampMs} = \max(0, \text{targetTimestampMs} - \text{leadTimeMs})$$
   Where a positive offset ($+L$) represents the hardware delay from electrical trigger to physical perception.
 - **Consequences:** Allows deterministic, channel-specific early triggering (e.g. firing haptics 25ms ahead so physical impact aligns with acoustic perception) and dynamic adjustment when Bluetooth headphones are connected. Eliminates hardcoded hardware assumptions.
+
+---
+
+### ADR-011: Haptic Feedback Architecture, Dynamic Tactile Scaling, and Event-Rate Safeguards
+
+- **Status:** Accepted (Milestone 4)
+- **Context:** The FEEL sensory pillar requires physical tactile pulses synchronized with musical rhythm. However:
+  1. `expo-haptics` provides discrete feedback styles (`Heavy`, `Medium`, `Light`, `Soft`, `Rigid`) rather than arbitrary continuous vibration amplitudes.
+  2. Android devices have widely varying motor hardware (Linear Resonant Actuators [LRA] vs Eccentric Rotating Mass [ERM]). LRAs have ~20–30ms spin-up and ~30–40ms decay; ERMs require 50–80ms to accelerate.
+  3. Firing haptics at high musical density without event rate limiting blurs discrete beats into an indistinct buzzing drone and increases cognitive tactile adaptation.
+- **Decision:**
+  1. Wrap `expo-haptics` behind a dedicated `ExpoHapticEngine` implementing `IHapticEngine` with an injectable `HapticDriver` for deterministic automated testing.
+  2. Implement **Dynamic Tactile Tier Remapping**: calculate $\text{effectiveIntensity} = \text{userIntensity} \times \text{cueWeight}$, and remap discrete styles dynamically (e.g., Heavy scales down to Medium at 50%, Light at 25%, and Soft at 10%). The 25%, 50%, 75%, and 100% user settings represent **logical intensity levels** mapped to these discrete styles; they do **not** guarantee corresponding physical vibration amplitude percentages across Android devices.
+  3. Implement **Event-Rate Safeguard**: enforce a 40ms minimum interval (`minIntervalMs = 40`) between consecutive trigger events to prevent overly dense trigger bursts. (Note: this is an event-rate software safeguard and does not claim to guarantee physical protection against motor overheating or hardware fatigue).
+  4. Ensure zero independent timers: `HapticEngine` is a purely reactive subscriber to `PriorityEventScheduler`'s `'haptic'` channel. Outdated cues on seek or pause are handled centrally by the scheduler. Suspend scheduler subscription when disabled and restore without duplication when re-enabled.
+- **Consequences:** Provides responsive, accessible tactile feedback with user-adjustable logical intensity. If physical testing on target Android phones requires continuous amplitude waveforms or frequency modulation, the abstracted `HapticDriver` allows drop-in replacement with a custom native Android module (`android.os.Vibrator` / `VibrationEffect.createWaveform`) without touching the UI or scheduler.
