@@ -4,6 +4,13 @@
  * Concrete implementation of the AudioEngine contract powered by `expo-audio`.
  * Enforces the critical architectural rule: The audio playback position is the
  * single authoritative clock for all future sensory systems (lyrics, visuals, haptics).
+ *
+ * Prepared for Master Synchronization Engine:
+ * - Monotonic timestamp anchoring (`updatedAtMs` via `performance.now()`).
+ * - Timeline revision generation counter (`timelineRevision`).
+ * - Safe forward estimation method (`getEstimatedPositionMs()`) that never mutates native timestamps.
+ * - Coalesced rapid-seeking serialization preventing out-of-order race conditions.
+ * - Robust native interruption and audio focus handling.
  */
 
 import {
@@ -24,6 +31,13 @@ export class ExpoAudioEngine implements AudioEngine {
   private player: AudioPlayer | null = null;
   private statusSubscription: { remove: () => void } | null = null;
 
+  // Timeline revision counter incremented on track load and seek
+  private timelineRevision = 0;
+
+  // Rapid-seeking serialization & coalescing state
+  private isSeekingNative = false;
+  private pendingSeekTargetSec: number | null = null;
+
   private clock: PlaybackClock = {
     positionMs: 0,
     durationMs: 0,
@@ -31,11 +45,20 @@ export class ExpoAudioEngine implements AudioEngine {
     rate: 1.0,
     isBuffering: false,
     errorMessage: null,
+    updatedAtMs: typeof performance !== 'undefined' ? performance.now() : Date.now(),
+    timelineRevision: 0,
   };
 
   private lastNotifiedStatus: PlaybackStatus = 'idle';
   private clockListeners = new Set<AudioEngineListener>();
   private statusListeners = new Set<AudioStatusListener>();
+
+  /**
+   * Helper returning monotonic timestamp in milliseconds.
+   */
+  private getMonotonicTime(): number {
+    return typeof performance !== 'undefined' ? performance.now() : Date.now();
+  }
 
   /**
    * Resolves an AudioSourceInput to the native AudioSource required by expo-audio.
@@ -67,6 +90,16 @@ export class ExpoAudioEngine implements AudioEngine {
       // Clean up previous player instance if any
       this.cleanupPlayer();
 
+      // Reset seek queue
+      this.isSeekingNative = false;
+      this.pendingSeekTargetSec = null;
+
+      // Increment timeline revision for new track
+      this.timelineRevision++;
+      this.clock.timelineRevision = this.timelineRevision;
+      this.clock.positionMs = 0;
+      this.clock.updatedAtMs = this.getMonotonicTime();
+
       const nativeSource = this.resolveSource(source);
 
       // Create new player with 50ms update interval for tight sensory synchronization
@@ -90,6 +123,7 @@ export class ExpoAudioEngine implements AudioEngine {
 
       // Initial transition to paused (ready to play)
       this.updateStatus('paused');
+      this.clock.updatedAtMs = this.getMonotonicTime();
       this.notifyClock();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -109,6 +143,7 @@ export class ExpoAudioEngine implements AudioEngine {
 
     try {
       this.player.play();
+      this.clock.updatedAtMs = this.getMonotonicTime();
       this.updateStatus('playing');
       this.notifyClock();
     } catch (err: unknown) {
@@ -125,6 +160,7 @@ export class ExpoAudioEngine implements AudioEngine {
 
     try {
       this.player.pause();
+      this.clock.updatedAtMs = this.getMonotonicTime();
       this.updateStatus('paused');
       this.notifyClock();
     } catch (err: unknown) {
@@ -150,6 +186,7 @@ export class ExpoAudioEngine implements AudioEngine {
       this.player.pause();
       await this.player.seekTo(0);
       this.clock.positionMs = 0;
+      this.clock.updatedAtMs = this.getMonotonicTime();
       this.updateStatus('stopped');
       this.notifyClock();
     } catch (err: unknown) {
@@ -160,6 +197,7 @@ export class ExpoAudioEngine implements AudioEngine {
 
   /**
    * Seek to a target timestamp in milliseconds.
+   * Utilizes request coalescing to prevent rapid repeated seeks from clobbering state.
    */
   public async seek(positionMs: number): Promise<void> {
     if (!this.player) return;
@@ -167,15 +205,76 @@ export class ExpoAudioEngine implements AudioEngine {
     const clampedMs = Math.max(0, Math.min(positionMs, this.clock.durationMs || positionMs));
     const targetSeconds = clampedMs / 1000;
 
+    // Increment timeline revision on seek to invalidate downstream cues
+    this.timelineRevision++;
+    this.clock.timelineRevision = this.timelineRevision;
+    this.clock.positionMs = clampedMs;
+    this.clock.updatedAtMs = this.getMonotonicTime();
+    this.notifyClock();
+
+    await this.dispatchNativeSeek(targetSeconds);
+  }
+
+  /**
+   * Serialized/coalesced native seek dispatcher.
+   */
+  private async dispatchNativeSeek(targetSeconds: number): Promise<void> {
+    if (this.isSeekingNative) {
+      // Coalesce: save latest target; executed when in-flight seek completes
+      this.pendingSeekTargetSec = targetSeconds;
+      return;
+    }
+
+    this.isSeekingNative = true;
+    this.pendingSeekTargetSec = null;
+
     try {
-      await this.player.seekTo(targetSeconds);
-      // Immediately reflect seeked position on the authoritative clock
-      this.clock.positionMs = clampedMs;
-      this.notifyClock();
+      let currentTarget = targetSeconds;
+      while (this.player) {
+        await this.player.seekTo(currentTarget);
+
+        // If another seek was requested while this one was executing, continue with newest
+        if (this.pendingSeekTargetSec !== null) {
+          currentTarget = this.pendingSeekTargetSec;
+          this.pendingSeekTargetSec = null;
+          continue;
+        }
+        break;
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      this.handleError(`Seek to ${positionMs}ms failed: ${message}`);
+      this.handleError(`Seek failed: ${message}`);
+    } finally {
+      this.isSeekingNative = false;
     }
+  }
+
+  /**
+   * Safe clock estimation method.
+   * Computes the current estimated playback position in milliseconds.
+   * - When playing, projects forward from the last authoritative native timestamp
+   *   using performance.now() and playback rate.
+   * - When paused, stopped, buffering, or idle, returns exact positionMs.
+   * - Clamped strictly to [0, durationMs].
+   * - Does not mutate native positionMs.
+   */
+  public getEstimatedPositionMs(atTimeMs?: number): number {
+    const now = typeof atTimeMs === 'number' ? atTimeMs : this.getMonotonicTime();
+
+    // Clock estimation NEVER advances while paused, stopped, buffering, idle, or completed
+    if (
+      this.clock.status !== 'playing' ||
+      this.clock.isBuffering ||
+      this.clock.durationMs <= 0
+    ) {
+      return this.clock.positionMs;
+    }
+
+    const elapsedMs = Math.max(0, now - this.clock.updatedAtMs);
+    const projectedMs = this.clock.positionMs + (elapsedMs * (this.clock.rate || 1.0));
+
+    // Clamp strictly to [0, durationMs]
+    return Math.max(0, Math.min(Math.round(projectedMs), this.clock.durationMs));
   }
 
   /**
@@ -183,6 +282,8 @@ export class ExpoAudioEngine implements AudioEngine {
    */
   public async unload(): Promise<void> {
     this.cleanupPlayer();
+    this.isSeekingNative = false;
+    this.pendingSeekTargetSec = null;
     this.clock = {
       positionMs: 0,
       durationMs: 0,
@@ -190,6 +291,8 @@ export class ExpoAudioEngine implements AudioEngine {
       rate: 1.0,
       isBuffering: false,
       errorMessage: null,
+      updatedAtMs: this.getMonotonicTime(),
+      timelineRevision: 0,
     };
     this.updateStatus('idle');
     this.notifyClock();
@@ -237,7 +340,12 @@ export class ExpoAudioEngine implements AudioEngine {
     const posMs = Math.round((status.currentTime || 0) * 1000);
     const durMs = Math.round((status.duration || 0) * 1000);
 
-    this.clock.positionMs = posMs;
+    // Only update positionMs if not actively seeking natively (prevents backwards jump before seek lands)
+    if (!this.isSeekingNative) {
+      this.clock.positionMs = posMs;
+      this.clock.updatedAtMs = this.getMonotonicTime();
+    }
+
     if (durMs > 0) {
       this.clock.durationMs = durMs;
     }
@@ -246,12 +354,22 @@ export class ExpoAudioEngine implements AudioEngine {
 
     if (status.didJustFinish) {
       this.clock.positionMs = this.clock.durationMs;
+      this.clock.updatedAtMs = this.getMonotonicTime();
       this.updateStatus('stopped');
     } else if (status.isLoaded) {
       if (status.playing) {
+        if (this.clock.status !== 'playing') {
+          this.clock.updatedAtMs = this.getMonotonicTime();
+        }
         this.updateStatus('playing');
-      } else if (this.clock.status !== 'stopped' && this.clock.status !== 'loading') {
-        this.updateStatus('paused');
+      } else {
+        // Native reports playing == false (e.g. paused by user or interrupted by audio focus loss / headphones unplugged)
+        if (this.clock.status === 'playing') {
+          this.clock.updatedAtMs = this.getMonotonicTime();
+          this.updateStatus('paused');
+        } else if (this.clock.status !== 'stopped' && this.clock.status !== 'loading') {
+          this.updateStatus('paused');
+        }
       }
     }
 
@@ -275,6 +393,7 @@ export class ExpoAudioEngine implements AudioEngine {
   private handleError(message: string): void {
     console.error(`[AudioEngine Error]: ${message}`);
     this.clock.errorMessage = message;
+    this.clock.updatedAtMs = this.getMonotonicTime();
     this.updateStatus('error');
     this.notifyClock();
   }

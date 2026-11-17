@@ -59,4 +59,6 @@ export interface PlaybackClock {
   rate: number;
   isBuffering: boolean;
   errorMessage?: string | null;
+  updatedAtMs: number; // Monotonic timestamp (via performance.now()) when positionMs was read/anchored
+  timelineRevision: number; // Monotonically increasing generation counter incremented on track loads and seeks
 }

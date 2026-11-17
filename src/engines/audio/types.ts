@@ -67,6 +67,17 @@ export interface AudioEngine {
   getClock(): PlaybackClock;
 
   /**
+   * Safe clock estimation method.
+   * Computes the current estimated playback position in milliseconds.
+   * - When playing, projects forward from the last authoritative native timestamp
+   *   using performance.now() and playback rate.
+   * - When paused, stopped, buffering, or idle, returns exact positionMs.
+   * - Clamped strictly to [0, durationMs].
+   * - Does not mutate native positionMs.
+   */
+  getEstimatedPositionMs(atTimeMs?: number): number;
+
+  /**
    * Subscribe to high-frequency clock updates.
    * Used as the master clock for the Synchronization Engine.
    */

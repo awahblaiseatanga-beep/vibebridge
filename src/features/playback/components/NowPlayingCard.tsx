@@ -21,6 +21,7 @@ export const NowPlayingCard: React.FC = () => {
     status,
     isBuffering,
     errorMessage,
+    timelineRevision,
     isPlaying,
     isPaused,
     isLoading,
@@ -256,7 +257,7 @@ export const NowPlayingCard: React.FC = () => {
             Status: <Text style={styles.telemetryValue}>{status}</Text>
           </Text>
           <Text style={styles.telemetryItem}>
-            Interval: <Text style={styles.telemetryValue}>50ms tick</Text>
+            Revision: <Text style={styles.telemetryValue}>rev {timelineRevision}</Text>
           </Text>
         </View>
       </View>

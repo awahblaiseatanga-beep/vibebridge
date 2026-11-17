@@ -4,23 +4,10 @@
  * Responsibilities:
  * - Master synchronization orchestrator.
  * - Bridges the Audio Engine playback clock with the Event Scheduler.
- * - Compensates for latency differences across Bluetooth devices, internal speakers,
- *   Android vibration motor spin-up latency, and visual rendering frames.
- *
- * Status: Interface defined.
+ * - Distributes authoritative time to all sensory channels.
+ * - Calculates cross-sensory latency compensation offsets (audio, haptics, visuals, lyrics).
  */
 
-export interface LatencyOffsets {
-  audioMs: number;
-  hapticMs: number;
-  visualMs: number;
-  lyricsMs: number;
-}
-
-export interface SynchronizationEngine {
-  setMasterTime(timeMs: number): void;
-  getMasterTime(): number;
-  setOffsets(offsets: Partial<LatencyOffsets>): void;
-  getOffsets(): LatencyOffsets;
-  syncTick(): void;
-}
+export * from './types';
+export * from './LatencyManager';
+export * from './MasterClock';

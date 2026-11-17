@@ -48,13 +48,20 @@ export function usePlayback() {
     return audioEngine.seek(positionMs);
   }, []);
 
+  const getEstimatedPositionMs = useCallback((atTimeMs?: number) => {
+    return audioEngine.getEstimatedPositionMs(atTimeMs);
+  }, []);
+
   return {
     clock,
     positionMs: clock.positionMs,
     durationMs: clock.durationMs,
     status: clock.status,
+    rate: clock.rate,
     isBuffering: clock.isBuffering,
     errorMessage: clock.errorMessage,
+    updatedAtMs: clock.updatedAtMs,
+    timelineRevision: clock.timelineRevision,
     isPlaying: clock.status === 'playing',
     isPaused: clock.status === 'paused',
     isLoading: clock.status === 'loading',
@@ -67,5 +74,6 @@ export function usePlayback() {
     resume,
     stop,
     seek,
+    getEstimatedPositionMs,
   };
 }

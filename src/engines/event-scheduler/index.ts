@@ -2,22 +2,11 @@
  * Engine: Event Scheduler
  *
  * Responsibilities:
- * - High-precision timeline scheduling for timestamped cues (Haptics, Lyrics, Visuals).
- * - Implements a rolling look-ahead window to prevent main-thread starvation.
- * - Handles seeking, pausing, and cue resets accurately.
- *
- * Status: Interface defined.
+ * - High-precision chronological event scheduler.
+ * - Dispatches latency-compensated cues against the MasterClock timeline.
+ * - Look-ahead window scheduling with duplicate prevention.
+ * - Invalidation of outdated cues across seeking and track transitions.
  */
 
-export interface ScheduledEvent<T = unknown> {
-  id: string;
-  timestampMs: number;
-  payload: T;
-}
-
-export interface EventScheduler<T = unknown> {
-  schedule(events: ScheduledEvent<T>[]): void;
-  seek(positionMs: number): void;
-  update(currentPositionMs: number): ScheduledEvent<T>[];
-  clear(): void;
-}
+export * from './types';
+export * from './PriorityEventScheduler';

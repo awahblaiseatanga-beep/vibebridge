@@ -74,3 +74,29 @@
 - **Context:** Multi-sensory music synchronization is prone to spaghetti code when UI components manage timers, hardware drivers, and playback states directly.
 - **Decision:** Enforce four decoupled layers: Presentation (`app/`, `src/features/`), State/Hooks (`src/store/`, `src/hooks/`), Engines (`src/engines/`), and Services (`src/services/`).
 - **Consequences:** High testability, zero tight coupling to hardware APIs, and clear boundaries for future team scaling.
+
+---
+
+### ADR-009: Master Clock and Look-Ahead Event Scheduling Architecture
+
+- **Status:** Accepted
+- **Context:** Deaf and hard-of-hearing music translation requires synchronizing three distinct sensory channels (READ lyrics, SEE rhythm visuals, FEEL tactile vibrations). Running separate JavaScript interval timers for each channel creates phase drift, thread contention, and desynchronization.
+- **Decision:**
+  1. Use the AudioEngine's native hardware playback position as the single authoritative master clock.
+  2. Implement a single controlled scheduling loop in `PriorityEventScheduler` with a configurable look-ahead window (default: 80ms) and sorted chronological queue.
+  3. Track `timelineRevision` to instantly invalidate obsolete cues upon seek or track changes.
+  4. Provide safe forward estimation (`getEstimatedPositionMs`) without mutating native position.
+- **Consequences:** All sensory systems consume a unified timeline. Eliminates duplicate timers, guarantees chronological event dispatch, and cleanly decouples output drivers from the scheduler.
+
+---
+
+### ADR-010: Latency Compensation Model and Sign Convention
+
+- **Status:** Accepted
+- **Context:** Different output channels exhibit asymmetric physical latencies: Android ERM/LRA vibration motors require 15–30ms to accelerate to peak amplitude, 60Hz/120Hz displays compose frames across 8–16ms, and Bluetooth audio sinks introduce 80–200ms transport delays.
+- **Decision:**
+  Adopt a unified latency compensation formula:
+  $$\text{leadTimeMs} = \text{channelOffsetMs} - \text{audioOffsetMs}$$
+  $$\text{triggerTimestampMs} = \max(0, \text{targetTimestampMs} - \text{leadTimeMs})$$
+  Where a positive offset ($+L$) represents the hardware delay from electrical trigger to physical perception.
+- **Consequences:** Allows deterministic, channel-specific early triggering (e.g. firing haptics 25ms ahead so physical impact aligns with acoustic perception) and dynamic adjustment when Bluetooth headphones are connected. Eliminates hardcoded hardware assumptions.

@@ -69,20 +69,28 @@ To ensure high maintainability, testability, and non-blocking performance, the s
 The engine layer handles real-time processing and hardware control, isolated from React component lifecycles.
 
 1. **`AudioEngine`**:
-   - Manages playback state machine (`idle`, `loading`, `playing`, `paused`, `stopped`).
-   - Wraps Expo Audio to load local audio assets and URIs.
-   - Dispatches continuous playback position updates to the synchronization master clock.
+   - Manages playback state machine (`idle`, `loading`, `playing`, `paused`, `stopped`, `error`).
+   - Wraps Expo Audio (`androidx.media3.exoplayer.ExoPlayer` on Android) to load bundled assets and local URIs.
+   - Provides authoritative playback timestamps (`positionMs`) with high-frequency updates.
+   - Anchors monotonic timestamps (`updatedAtMs` via `performance.now()`) for safe forward estimation without mutating native timestamps.
+   - Tracks timeline revisions (`timelineRevision`) incremented on track loads and seeks to invalidate downstream scheduled cues.
+   - Serializes and coalesces rapid seek requests to eliminate asynchronous race conditions.
 
-2. **`SynchronizationEngine`**:
-   - Serves as the single source of truth for current playback time (`masterTimeMs`).
-   - Applies configurable per-channel latency offsets to compensate for hardware timing differences:
-     - `hapticOffsetMs`: Compensates for motor spin-up latency (~15ms to 30ms).
-     - `audioOffsetMs`: Compensates for Bluetooth audio buffering (~100ms to 250ms).
-     - `visualOffsetMs`: Compensates for display frame composition (16.6ms at 60Hz).
+2. **`SynchronizationEngine` (MasterClock & LatencyManager)**:
+   - Exposes `AudioMasterClock` as the central timing distribution point across all sensory consumers.
+   - Provides continuous forward timeline estimation via monotonic clock anchoring (`getEstimatedPositionMs`) without mutating native ExoPlayer timestamps.
+   - Manages configurable `LatencyOffsets` (audio, haptic, visual, lyrics) using a standardized lead-time compensation formula:
+     $$\text{leadTimeMs} = \text{channelOffsetMs} - \text{audioOffsetMs}$$
+     $$\text{triggerTimestampMs} = \max(0, \text{targetTimestampMs} - \text{leadTimeMs})$$
+   - Default offsets: `audioOffsetMs: 0ms`, `hapticOffsetMs: 25ms` (motor spin-up), `visualOffsetMs: 16ms` (display frame rasterization), `lyricsOffsetMs: 0ms`.
 
-3. **`EventScheduler`**:
-   - Manages chronological arrays of cues (`HapticCue`, `VisualBeatCue`, `LyricLine`).
-   - Implements a rolling look-ahead window (e.g., 50ms ahead) to dispatch events just-in-time, preventing JS thread bottlenecks and dropped beats.
+3. **`EventScheduler` (PriorityEventScheduler)**:
+   - Chronological, priority-sorted event queue with binary search insertion ($O(\log n)$).
+   - Single controlled scheduling loop (default 20ms interval) with configurable look-ahead window (default 80ms).
+   - Automated timeline revision invalidation: instantly drops queued cues from older revisions on seek or track transitions.
+   - Duplicate prevention via dispatched event ID tracking.
+   - Channel-specific subscriptions (`haptic`, `visual`, `lyrics`) and global event delivery interface.
+   - Fully decoupled from UI components and hardware drivers.
 
 4. **`HapticEngine`**:
    - Directly drives hardware vibration.
