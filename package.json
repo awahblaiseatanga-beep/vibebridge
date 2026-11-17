@@ -25,10 +25,11 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/test-audio-engine.js && node scripts/test-synchronization.js && node scripts/test-haptic-engine.js",
+    "test": "node scripts/test-audio-engine.js && node scripts/test-synchronization.js && node scripts/test-haptic-engine.js && node scripts/test-visual-engine.js",
     "test:audio": "node scripts/test-audio-engine.js",
     "test:sync": "node scripts/test-synchronization.js",
-    "test:haptic": "node scripts/test-haptic-engine.js"
+    "test:haptic": "node scripts/test-haptic-engine.js",
+    "test:visual": "node scripts/test-visual-engine.js"
   },
   "private": true
 }

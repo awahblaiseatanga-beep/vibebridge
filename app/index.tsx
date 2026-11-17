@@ -10,6 +10,7 @@ import { theme } from '@/theme';
 import { APP_CONFIG, SENSORY_CHANNELS } from '@/constants';
 import { Card, SensoryBadge } from '@/components/common';
 import { NowPlayingCard } from '@/features/playback';
+import { VisualRhythmSurface } from '@/features/visualizer';
 import { HapticControlCard } from '@/features/haptics';
 
 export default function HomeScreen() {
@@ -27,7 +28,7 @@ export default function HomeScreen() {
             </View>
             <View>
               <Text style={styles.brandTitle}>{APP_CONFIG.name}</Text>
-              <Text style={styles.versionBadge}>v{APP_CONFIG.version} • Milestone 4 (FEEL: Haptics)</Text>
+              <Text style={styles.versionBadge}>v{APP_CONFIG.version} • Milestone 5 (SEE: Visuals)</Text>
             </View>
           </View>
           <Text style={styles.tagline}>{APP_CONFIG.tagline}</Text>
@@ -62,6 +63,9 @@ export default function HomeScreen() {
 
         {/* Connected Now Playing Transport Controls */}
         <NowPlayingCard />
+
+        {/* SEE Pillar: Visual Rhythm Surface */}
+        <VisualRhythmSurface />
 
         {/* FEEL Pillar: Tactile Haptics Controls */}
         <HapticControlCard />

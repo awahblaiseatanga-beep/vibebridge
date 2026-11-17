@@ -109,9 +109,30 @@ The engine layer handles real-time processing and hardware control, isolated fro
    - **Event-Rate Safeguards**: Enforces a strict 40ms minimum interval (`minIntervalMs = 40`) between consecutive vibration triggers to prevent dense bursts. (Software event-rate guard; does not guarantee physical protection against motor overheating or hardware fatigue).
    - Clean interface allows hot-swapping with a custom Android native module (`VibrationEffect` with amplitude control) if hardware testing demands it.
 
-5. **`VisualEngine`**:
-   - Drives visual pulse, frequency expansion, and waveform reactions.
-   - Powered by React Native Reanimated running on the native UI thread to maintain 60fps independent of JavaScript execution.
+5. **`VisualRhythmEngine` (VisualEngine — Completed Milestone 5)**:
+   - Hybrid music visualization engine implementing `IVisualRhythmEngine`.
+   - Driven reactively via `PriorityEventScheduler`'s `'visual'` channel with provisional, configurable latency compensation (16ms lead time).
+   - **Layer A (Expressive)**: Expanding and pulsating geometric nodes with energy aura rings reacting to musical beat energy. Rendered via React Native `Animated` running on the Android native UI thread (`useNativeDriver: true`) targeting 60 FPS without bridge contention.
+   - **Layer B (Informational)**: Secondary 4/4 meter HUD displaying beat indicators (Kick vs Snare), measure progression (`BAR 1/6`), and semantic status.
+   - **Non-Color Multi-Modal Accessibility**:
+     - *Downbeat (Kick / Beat 1)*: Diamond (`◆`), border width 3–4, scale 1.35x.
+     - *Backbeat (Snare / Beats 2 & 4)*: Triangle (`▲`), border width 2–3, scale 1.20x.
+     - *Subdivision (Hi-hats / eighth notes)*: Circle (`●`), border width 1–2, scale 1.06x.
+     - *Accent (Climax syncopations)*: Accent Burst (`◈`), border width 4–5, scale 1.45x.
+     - *Resolution (Final cadence)*: Starburst (`✦`), border width 2–3, scale 1.25x.
+     - *Rest (Compositional silence)*: Neutral Line (`—`), border width 1, scale 1.00x.
+   - **Accessible Reduced Motion Mode**:
+     - Disables kinetic pulsing/scaling animations (scale locked strictly to 1.00).
+     - Amplifies high-contrast border weights to preserve visual rhythm perception without motion triggers.
+   - **Strict Distinction of Musical Rest vs Transport Lifecycle**:
+     - *Musical Rest*: Compositional silence while actively playing (`status: 'playing'`); `isRest: true`.
+     - *Transport Pause*: User paused playback; freezes animation and settles to neutral; `isPaused: true`.
+     - *Transport Buffering*: Network or storage stall; freezes animation; `isBuffering: true`.
+   - **Configurable Animation Scales**:
+     - Managed via `VisualScaleConfig` (`DEFAULT_VISUAL_SCALE_CONFIG`) and dynamically overrideable via `setScales()`.
+   - **Canonical Shared Rhythm Source (`src/features/rhythm/`)**:
+     - 47 cues spanning 6 bars of 4/4 time at 120 BPM in `CANONICAL_DEMO_RHYTHM_SCORE`.
+     - Shared single source of truth for both tactile haptics and visual rhythm cues, ensuring 1:1 synchronization without divergence.
 
 6. **`LyricsEngine`**:
    - Fast parser for `.lrc` and JSON lyrics formats.
@@ -141,6 +162,7 @@ VIBEBRIDGE/
 │   │   ├── lyrics/
 │   │   ├── visualizer/
 │   │   ├── haptics/
+│   │   ├── rhythm/
 │   │   └── settings/
 │   ├── engines/
 │   │   ├── audio/

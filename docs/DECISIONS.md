@@ -116,3 +116,18 @@
   3. Implement **Event-Rate Safeguard**: enforce a 40ms minimum interval (`minIntervalMs = 40`) between consecutive trigger events to prevent overly dense trigger bursts. (Note: this is an event-rate software safeguard and does not claim to guarantee physical protection against motor overheating or hardware fatigue).
   4. Ensure zero independent timers: `HapticEngine` is a purely reactive subscriber to `PriorityEventScheduler`'s `'haptic'` channel. Outdated cues on seek or pause are handled centrally by the scheduler. Suspend scheduler subscription when disabled and restore without duplication when re-enabled.
 - **Consequences:** Provides responsive, accessible tactile feedback with user-adjustable logical intensity. If physical testing on target Android phones requires continuous amplitude waveforms or frequency modulation, the abstracted `HapticDriver` allows drop-in replacement with a custom native Android module (`android.os.Vibrator` / `VibrationEffect.createWaveform`) without touching the UI or scheduler.
+
+---
+
+### ADR-012: Hybrid Visual Rhythm Architecture, Non-Color Accessibility, and Canonical Rhythm Metadata
+
+- **Status:** Accepted (Milestone 5)
+- **Context:** The SEE sensory pillar requires real-time visual rhythm translation for Deaf and hard-of-hearing music listeners.
+  Key architectural requirements:
+  1. **Visual Direction:** A hybrid model combining an expressive visual canvas (Layer A: pulsating, expanding/contracting geometric nodes and energy aura rings responding to beat strength and musical energy) with a secondary informational HUD (Layer B: clear 4/4 meter indicators showing Kick vs Snare, measure counter Bar 1–6, and semantic status).
+  2. **Multi-Modal Accessibility:** Visual distinctions must not rely on color alone. Each role is assigned unique geometry (`diamond`, `triangle`, `circle`, `accent-burst`, `starburst`, `line`), unique symbols (`◆`, `▲`, `●`, `◈`, `✦`, `—`), variable border weights, and clear text labels. An accessible **Reduced Motion mode** locks animation scales to 1.0 while amplifying high-contrast borders.
+  3. **Separation of Musical Rest vs Transport Lifecycle:** Musical rest is compositional silence within an active track (`status: 'playing'`). It must never be conflated with transport pause (user pauses playback) or transport buffering (I/O or network stall).
+  4. **Configurable Animation Scales:** Default animation scales (`strongScale: 1.35`, `mediumScale: 1.20`, `softScale: 1.06`, `accentScale: 1.45`, `resolutionScale: 1.25`, `restScale: 1.00`) are fully configurable through `VisualScaleConfig` rather than fixed hardcoded constants.
+  5. **Canonical Shared Rhythm Metadata:** Haptic cues and visual cues are derived from a single canonical score (`CANONICAL_DEMO_RHYTHM_SCORE`) under `src/features/rhythm/`, eliminating divergent timestamps and preserving 100% backward compatibility with Milestone 4 haptics.
+  6. **Zero Independent Timers:** Visual updates are strictly reactive subscribers to `PriorityEventScheduler`'s `'visual'` channel and `MasterClock`. Visual latency compensation uses a provisional, configurable 16ms lead time (not claimed as physically validated).
+- **Consequences:** Provides responsive, accessible visual rhythm feedback that cleanly coexists with haptics and audio. The expressive visual layer is the primary element on Now Playing, with beat and measure information secondary. Performance achieves 60 FPS on Android native UI thread via React Native `Animated` with `useNativeDriver: true`.

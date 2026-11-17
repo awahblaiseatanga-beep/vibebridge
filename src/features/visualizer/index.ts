@@ -3,10 +3,9 @@
  *
  * Responsibilities:
  * - Real-time visual representation of musical intensity and rhythm.
- * - Reactive animations (pulses, waveforms, frequency ripples).
- * - React Native Reanimated (and Skia when advanced shaders are required).
- *
- * Status: Foundation milestone.
+ * - Reactive animations (pulsing, expanding/contracting geometric shapes).
+ * - Layer A (Expressive) & Layer B (Informational 4/4 meter HUD).
+ * - Non-color-reliant visual hierarchy with accessible Reduced Motion mode.
  */
 
 export interface VisualizerRenderConfig {
@@ -14,3 +13,7 @@ export interface VisualizerRenderConfig {
   fpsLimit: number;
   sensitivity: number;
 }
+
+export { useVisualizer } from './useVisualizer';
+export { VisualRhythmSurface } from './components/VisualRhythmSurface';
+export * from '@/engines/visual';

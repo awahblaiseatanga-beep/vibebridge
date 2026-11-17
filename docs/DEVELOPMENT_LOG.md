@@ -300,4 +300,70 @@ Phase 2, Milestone 2 is **COMPLETED**. Committed under commit `018af1a`.
 ---
 
 ### Status
-Phase 2, Milestone 4 is **COMPLETED**. Proposed commit ready for user review and authorization.
+Phase 2, Milestone 4 is **COMPLETED**. Confirmed commit: `635aa02a93b0dbfcfb09a38ef8a245fa255a170f`.
+
+---
+
+### Phase 2, Milestone 5: SEE — Hybrid Visual Rhythm Engine
+**Date:** 2026-11-17  
+
+#### 1. Shared Canonical Rhythm Metadata (`src/features/rhythm/`)
+- Extracted single source of truth for the 120 BPM demo track into `CANONICAL_DEMO_RHYTHM_SCORE` in `src/features/rhythm/demoTrackScore.ts`:
+  - 47 cues spanning 6 bars of 4/4 time at 120 BPM (500ms quarter note, 250ms eighth note).
+  - Downbeat kicks (Beats 1 & 3): `role: 'downbeat'`, `weight: 1.0`.
+  - Backbeat snares (Beats 2 & 4): `role: 'backbeat'`, `weight: 0.85`.
+  - Off-beat subdivisions (eighth notes): `role: 'subdivision'`, `weight: 0.5`.
+  - Bar 6 climax accents (Beats 3.0, 3.5): `role: 'accent'`, `weight: 1.0`.
+  - Bar 6 final cadence (Beat 4.0 at 11500ms): `role: 'resolution'`, `weight: 1.0`.
+  - Bar 6 compositional silence (11600ms–12000ms): `role: 'rest'`, `weight: 0.0`.
+- Refactored `src/features/haptics/demoTrackHaptics.ts` to derive from `CANONICAL_DEMO_RHYTHM_SCORE`, maintaining 100% backward compatibility.
+- Implemented `scheduleDemoTrackSensoryCues` which schedules both haptic and visual cues onto `PriorityEventScheduler` simultaneously, guaranteeing 1:1 synchronization.
+
+#### 2. Visual Rhythm Engine (`src/engines/visual/`)
+- Created `IVisualRhythmEngine` interface and `VisualRhythmEngine` concrete implementation in `src/engines/visual/VisualRhythmEngine.ts`.
+- Created pure, deterministic mapping utility `VisualEventMapper` in `src/engines/visual/VisualEventMapper.ts`.
+- Purely reactive consumer: subscribes to `PriorityEventScheduler`'s `'visual'` channel and `MasterClock`. Operates with **zero independent timers**.
+- Configurable animation scales (`VisualScaleConfig` with defaults: `strongScale: 1.35`, `mediumScale: 1.20`, `softScale: 1.06`, `accentScale: 1.45`, `resolutionScale: 1.25`, `restScale: 1.00`), overrideable at runtime via `setScales()`.
+- Strict separation between compositional silence (musical rest), transport pause, and transport buffering.
+- Visual latency compensation uses provisional, configurable 16ms lead time (not claimed as physically validated).
+- Suspends scheduler subscription when disabled and restores without duplicate listeners.
+
+#### 3. Hybrid Visual Components & Accessible UI (`src/features/visualizer/`)
+- Created `useVisualizer` hook binding UI to `visualRhythmEngine`.
+- Built accessible `VisualRhythmSurface` component:
+  - **Layer A (Expressive)**: Centered pulsating geometry nodes and expanding aura rings reacting to beat strength and energy level. Rendered via React Native `Animated` running on the Android native UI thread (`useNativeDriver: true`) targeting 60 FPS.
+  - **Layer B (Informational)**: Secondary 4/4 meter HUD displaying beat indicators (Kick vs Snare), measure counter (`BAR 1/6`), and clear semantic status.
+- Multi-modal accessibility (non-color reliance): distinct shapes (`diamond`, `triangle`, `circle`, `accent-burst`, `starburst`, `line`), distinct glyphs (`◆`, `▲`, `●`, `◈`, `✦`, `—`), variable border weights, and text labels.
+- Accessible **Reduced Motion mode**: locks animation scales strictly at 1.00 while amplifying border contrast.
+- Integrated into `app/index.tsx` home screen between `NowPlayingCard` and `HapticControlCard`.
+
+#### 4. Architecture Documentation
+- Recorded ADR-012 (Hybrid Visual Rhythm Architecture, Non-Color Accessibility, and Canonical Rhythm Metadata) in `docs/DECISIONS.md`.
+- Updated `docs/TECHNICAL_ARCHITECTURE.md`.
+
+#### 5. Verification & Testing
+- Built comprehensive test suite in `scripts/test-visual-engine.js`:
+  - Test 1: Initial state & configurable scale defaults.
+  - Test 2: Dynamic scale configuration override.
+  - Test 3: Pure event mapping for all musical roles (`downbeat`, `backbeat`, `subdivision`, `accent`, `resolution`, `rest`).
+  - Test 4: Non-color visual distinction verification (shapes, glyphs, borders, labels).
+  - Test 5: Accessible Reduced Motion mode (scale locked at 1.0, high-contrast borders).
+  - Test 6: Clear distinction between musical rest vs transport pause vs buffering.
+  - Test 7: PriorityEventScheduler subscription on `'visual'` channel and 16ms lead time dispatch.
+  - Test 8: Timeline revision invalidation on seek & track changes.
+  - Test 9: Enable/disable lifecycle suspension, unsubscription, and disposal.
+  - Test 10: Canonical demo rhythm score visual cues verification (47 cues, 1:1 alignment with haptics).
+  - Status: **ALL 10 TESTS PASSED**.
+- Verification across entire suite (`npm test`):
+  - Audio Engine: **13/13 PASSED**
+  - Synchronization & Event Scheduler: **12/12 PASSED**
+  - Haptic Engine: **10/10 PASSED**
+  - Visual Rhythm Engine: **10/10 PASSED**
+  - Total: **45/45 UNIT TESTS PASSED**.
+- TypeScript strict typecheck (`npm run typecheck`): **PASSED (0 errors)**.
+- Android bundling verification (`npx expo export --platform android`): **PASSED (1,177 modules bundled in 7.5s)**.
+
+---
+
+### Status
+Phase 2, Milestone 5 is **COMPLETED**. Proposed commit ready for user review and authorization.

@@ -10,7 +10,7 @@ import { theme } from '@/theme';
 import { Card } from '@/components/common';
 import { formatMilliseconds } from '@/utils';
 import { eventScheduler } from '@/engines/event-scheduler';
-import { scheduleDemoTrackHaptics } from '@/features/haptics';
+import { scheduleDemoTrackSensoryCues } from '@/features/rhythm';
 import { usePlayback } from '../usePlayback';
 
 // Bundled demo audio stem (12-second 120 BPM rhythmic track)
@@ -55,10 +55,10 @@ export const NowPlayingCard: React.FC = () => {
     }
   }, [isIdle, load]);
 
-  // Synchronize demo track rhythmic haptic cues whenever the timeline revision changes (track load or seek)
+  // Synchronize demo track rhythmic sensory cues (haptic + visual) whenever timeline revision changes (track load or seek)
   useEffect(() => {
     if (timelineRevision > 0) {
-      scheduleDemoTrackHaptics(eventScheduler, timelineRevision);
+      scheduleDemoTrackSensoryCues(eventScheduler, timelineRevision);
     }
   }, [timelineRevision]);
 

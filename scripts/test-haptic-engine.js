@@ -27,6 +27,7 @@ function transpile(filePath) {
 const latencyManagerCode = transpile('src/engines/synchronization/LatencyManager.ts');
 const schedulerCode = transpile('src/engines/event-scheduler/PriorityEventScheduler.ts');
 const hapticEngineCode = transpile('src/engines/haptic/ExpoHapticEngine.ts');
+const rhythmCode = transpile('src/features/rhythm/demoTrackScore.ts');
 const demoHapticsCode = transpile('src/features/haptics/demoTrackHaptics.ts');
 
 // Mock Expo Haptics constants
@@ -78,6 +79,7 @@ const sandbox = {
     if (id === 'expo-haptics') return MockExpoHaptics;
     if (id.includes('synchronization')) return exportedSync;
     if (id.includes('event-scheduler')) return exportedScheduler;
+    if (id.includes('rhythm')) return exportedRhythm;
     if (id.includes('haptic')) return exportedHaptics;
     if (id.startsWith('@/types') || id.endsWith('types')) return {};
     return require(id);
@@ -130,7 +132,13 @@ const exportedHaptics = {
   ExpoHapticEngine,
 };
 
-// 4. Load demoTrackHaptics
+// 4. Load demoTrackScore (canonical shared rhythm)
+sandbox.exports = {};
+sandbox.module = { exports: {} };
+vm.runInContext(rhythmCode, sandbox);
+const exportedRhythm = { ...sandbox.exports };
+
+// 5. Load demoTrackHaptics
 sandbox.exports = {};
 sandbox.module = { exports: {} };
 vm.runInContext(demoHapticsCode, sandbox);

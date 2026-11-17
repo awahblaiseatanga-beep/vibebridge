@@ -2,17 +2,13 @@
  * Engine: Visual (SEE Pillar)
  *
  * Responsibilities:
- * - Translates rhythm, beat, and intensity cues into visual animations.
- * - Drives 60fps/120fps reactive animations using React Native Reanimated.
- * - Architectural boundary prepared for React Native Skia when complex shader rendering is needed.
- *
- * Status: Interface defined.
+ * - Dedicated SEE pillar visual rhythm engine.
+ * - Reactive subscriber to PriorityEventScheduler's 'visual' channel.
+ * - Dynamic geometric mapping of musical events and energy.
+ * - Supports configurable animation scales and reduced-motion mode.
+ * - Distinguishes musical rests from transport lifecycle events (pause, buffering).
  */
 
-import { VisualBeatCue } from '@/types';
-
-export interface VisualEngine {
-  onBeat(cue: VisualBeatCue): void;
-  reset(): void;
-  setRenderQuality(quality: 'low' | 'medium' | 'high'): void;
-}
+export * from './types';
+export * from './VisualEventMapper';
+export * from './VisualRhythmEngine';
