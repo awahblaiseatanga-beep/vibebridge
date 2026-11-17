@@ -131,3 +131,17 @@
   5. **Canonical Shared Rhythm Metadata:** Haptic cues and visual cues are derived from a single canonical score (`CANONICAL_DEMO_RHYTHM_SCORE`) under `src/features/rhythm/`, eliminating divergent timestamps and preserving 100% backward compatibility with Milestone 4 haptics.
   6. **Zero Independent Timers:** Visual updates are strictly reactive subscribers to `PriorityEventScheduler`'s `'visual'` channel and `MasterClock`. Visual latency compensation uses a provisional, configurable 16ms lead time (not claimed as physically validated).
 - **Consequences:** Provides responsive, accessible visual rhythm feedback that cleanly coexists with haptics and audio. The expressive visual layer is the primary element on Now Playing, with beat and measure information secondary. Performance achieves 60 FPS on Android native UI thread via React Native `Animated` with `useNativeDriver: true`.
+
+---
+
+### ADR-013: READ Synchronized Lyrics Engine, Clock-Authoritative Resolution, and Strict Metadata Validation
+
+- **Status:** Accepted (Milestone 6)
+- **Context:** The READ sensory pillar requires real-time synchronized lyrics rendering for Deaf and hard-of-hearing music listeners.
+  Key architectural requirements:
+  1. **Clock-Authoritative Active Line Resolution:** Relying solely on asynchronous timer callbacks or JS scheduler event ticks causes lyrics to drift or stay out of sync when the JavaScript thread experiences transient delays or garbage collection pauses. `LyricsEngine` uses binary search ($O(\log n)$) directly against `MasterClock.getEstimatedPositionMs()` to compute the authoritative active line, previous line, and upcoming lines. Boundary events on `PriorityEventScheduler`'s `'lyrics'` channel notify consumers, but the master clock remains the sole source of truth.
+  2. **Explicit Transition & Instrumental Gap Handling:** Rather than keeping an outdated lyric highlighted during instrumental periods, `LyricsTimeline` explicitly detects gaps between segments (`status: 'instrumental_gap'`, `'before_lyrics'`, `'after_lyrics'`) and presents an accessible transition state (`"♫ Instrumental Break ♫"`).
+  3. **Strict Metadata Validation (No Silent Repairs):** `LyricsValidator` strictly checks segment timestamps (`startMs >= 0`, `endMs > startMs`), strict chronological ordering, non-empty text, matching track associations, and strictly rejects overlapping segments. Invalid metadata is never silently repaired.
+  4. **Support for Un-Lyriced Audio (`hasLyrics: false`):** Tracks without lyrics metadata (e.g. purely instrumental audio or user-imported files without `.lrc`) must not break playback, haptics, or visualizer components.
+  5. **Demonstration Transparency for Instrumental Stem:** The bundled demo track (`assets/music/vibebridge_demo.wav`) is an instrumental/synthesized rhythm stem. The demonstration lyrics use original demonstrative text illustrating the multi-sensory experience with clear user disclosure: `"Demo Lyrics · Synchronized to 120 BPM Stem"`.
+- **Consequences:** Eliminates phase drift and desynchronization. Forward/backward seeking immediately recovers the correct line with zero stale cues. The active line is the primary readable element on Now Playing, accompanied by previous and upcoming line previews.

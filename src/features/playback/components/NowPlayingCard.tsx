@@ -11,6 +11,8 @@ import { Card } from '@/components/common';
 import { formatMilliseconds } from '@/utils';
 import { eventScheduler } from '@/engines/event-scheduler';
 import { scheduleDemoTrackSensoryCues } from '@/features/rhythm';
+import { lyricsEngine } from '@/engines/lyrics';
+import { DEMO_TRACK_LYRICS } from '@/features/lyrics';
 import { usePlayback } from '../usePlayback';
 
 // Bundled demo audio stem (12-second 120 BPM rhythmic track)
@@ -44,6 +46,7 @@ export const NowPlayingCard: React.FC = () => {
   // Auto-load bundled demo track on mount if currently idle
   useEffect(() => {
     if (isIdle) {
+      lyricsEngine.loadLyrics(DEMO_TRACK_LYRICS);
       load({
         type: 'bundle',
         assetId: DEMO_AUDIO_ASSET,
@@ -64,6 +67,7 @@ export const NowPlayingCard: React.FC = () => {
 
   const handlePlayPause = async () => {
     if (isIdle) {
+      lyricsEngine.loadLyrics(DEMO_TRACK_LYRICS);
       await load({
         type: 'bundle',
         assetId: DEMO_AUDIO_ASSET,

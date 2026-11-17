@@ -134,9 +134,19 @@ The engine layer handles real-time processing and hardware control, isolated fro
      - 47 cues spanning 6 bars of 4/4 time at 120 BPM in `CANONICAL_DEMO_RHYTHM_SCORE`.
      - Shared single source of truth for both tactile haptics and visual rhythm cues, ensuring 1:1 synchronization without divergence.
 
-6. **`LyricsEngine`**:
-   - Fast parser for `.lrc` and JSON lyrics formats.
-   - Uses binary search to resolve the active lyric line for any given `positionMs` in $O(\log n)$ time.
+6. **`LyricsEngine` (Completed Milestone 6)**:
+   - Dedicated READ sensory pillar engine implementing `ILyricsEngine`.
+   - Driven authoritatively via `MasterClock`'s continuous forward estimation (`getEstimatedPositionMs()`), ensuring resilience against delayed JavaScript execution and zero phase drift.
+   - Boundary cues scheduled on `PriorityEventScheduler`'s `'lyrics'` channel for line-transition events.
+   - Binary-search active line resolution ($O(\log n)$) across validated segments.
+   - **Explicit Instrumental Gap & Transition Handling**: Identifies intervals between segments (`status: 'instrumental_gap'`, `'before_lyrics'`, `'after_lyrics'`), clearing outdated active highlights and showing accessible transition cues (`"♫ Instrumental Break ♫"`).
+   - **Strict Metadata Validation (`LyricsValidator`)**: Enforces non-negative finite timestamps, $startMs < endMs$, chronological ordering, non-empty text, and matching track IDs; strictly rejects overlapping segments without silent repair.
+   - **Accessible UI (`LyricsCard`)**:
+     - *Active Line (Primary)*: Highlighted in Sky Cyan (`#38BDF8`), bold typography, high contrast (>7:1 WCAG AAA), speaker tag support.
+     - *Previous Line (Secondary)*: Earlier line preserved with reduced emphasis (`opacity: 0.35`).
+     - *Upcoming Lines (Secondary)*: Next 1–2 preview lines rendered in secondary text (`opacity: 0.6`).
+     - *Transparency Disclosure*: Clearly displays `"Demo Lyrics · Synchronized to 120 BPM Stem"` for the demonstration track.
+     - *Un-Lyriced Audio Fallback*: Safe graceful state for tracks with `hasLyrics: false`.
 
 ### 2.3 Service Layer (`src/services/`)
 - **`StorageService`**: Abstracts device persistent storage for user preferences and track library index.

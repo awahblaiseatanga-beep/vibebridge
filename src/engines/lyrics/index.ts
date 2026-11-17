@@ -2,17 +2,13 @@
  * Engine: Lyrics (READ Pillar)
  *
  * Responsibilities:
- * - Parsing standard synchronized lyric formats (LRC, enhanced LRC, JSON).
- * - Fast binary-search index lookup for active lyric line given current timecode.
- * - Emitting line change and character-level karaoke highlight events.
- *
- * Status: Interface defined.
+ * - Deterministic timestamped lyrics validation and timeline management.
+ * - Clock-anchored active line resolution in O(log n) time.
+ * - Reactive state machine distinguishing active lines and instrumental gaps.
+ * - Boundary event scheduling on the 'lyrics' sensory channel.
  */
 
-import { LyricLine } from '@/types';
-
-export interface LyricsEngine {
-  parse(rawLyrics: string, format: 'lrc' | 'json'): LyricLine[];
-  getActiveLine(positionMs: number): LyricLine | null;
-  getNextLine(positionMs: number): LyricLine | null;
-}
+export * from './types';
+export * from './LyricsValidator';
+export * from './LyricsTimeline';
+export * from './LyricsEngine';

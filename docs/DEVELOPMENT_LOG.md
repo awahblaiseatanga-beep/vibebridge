@@ -366,4 +366,86 @@ Phase 2, Milestone 4 is **COMPLETED**. Confirmed commit: `635aa02a93b0dbfcfb09a3
 ---
 
 ### Status
-Phase 2, Milestone 5 is **COMPLETED**. Proposed commit ready for user review and authorization.
+Phase 2, Milestone 5 is **COMPLETED**. Confirmed commit: `1f7e27d3a77f58167525c51c7515a7da5216637f`.
+
+---
+
+### Phase 2, Milestone 6: READ — Synchronized Lyrics Engine
+**Date:** 2026-11-17
+
+#### 1. Data Model & Strict Validator (`src/engines/lyrics/`)
+- Created `src/engines/lyrics/types.ts` defining `LyricSegment`, `TrackLyrics`, `LyricActiveStatus`, `LyricsEngineState`, `LyricCuePayload`, and `ILyricsEngine`.
+- Built `src/engines/lyrics/LyricsValidator.ts`:
+  - Enforces finite non-negative timestamps (`startMs >= 0`, `endMs > startMs`).
+  - Enforces strict chronological ordering and non-empty text strings.
+  - Rejects overlapping segments (`segments[i].startMs < segments[i-1].endMs`).
+  - Rejects mismatched track IDs.
+  - Zero silent repairs: strictly throws `LyricsValidationError` on invalid data.
+
+#### 2. LyricsTimeline & Active Segment Resolver (`src/engines/lyrics/LyricsTimeline.ts`)
+- Pure deterministic timeline resolver utilizing binary search ($O(\log n)$) against authoritative clock time.
+- Categorizes exact playback status: `'no_lyrics'`, `'before_lyrics'`, `'active'`, `'instrumental_gap'`, and `'after_lyrics'`.
+- Handles gaps between segments explicitly, displaying accessible transition cues without keeping obsolete lyrics highlighted.
+- Provides `toScheduledEvents()` converting line start/end boundaries into `ScheduledEventInput` cues for the scheduler's `'lyrics'` channel.
+
+#### 3. LyricsEngine Implementation (`src/engines/lyrics/LyricsEngine.ts`)
+- Implements `ILyricsEngine` anchored to `MasterClock` and `PriorityEventScheduler`.
+- Zero independent timers: uses `MasterClock.getEstimatedPositionMs()` as the single authoritative source of truth.
+- Resilient to delayed JavaScript execution: re-evaluates active line directly from clock position, preventing phase drift or frozen highlights.
+- Invalidation safety: listens to `timelineRevision` changes (on seek or track replacement) and immediately re-evaluates line position while dropping outdated cues.
+- Handles pause/resume/buffering: freezes active line on pause/buffering and recovers on resume.
+- Safe fallback for un-lyriced audio: tracks with `hasLyrics: false` or `null` lyrics transition cleanly to `'no_lyrics'` without exceptions.
+
+#### 4. Original Demonstration Lyrics Metadata (`src/features/lyrics/demoTrackLyrics.ts`)
+- Created original 4-segment demonstration lyrics score fitting the 12-second 120 BPM demo track (`assets/music/vibebridge_demo.wav`).
+- Composed original text celebrating the accessible multi-sensory experience:
+  - Line 1 (500ms–3500ms): *"Feel the pulse begin, deep in your hands"* (Verse)
+  - Gap 1 (3500ms–4000ms): Instrumental transition
+  - Line 2 (4000ms–6500ms): *"See the colors rise, dancing with the beat"* (Verse)
+  - Gap 2 (6500ms–7500ms): Rhythm buildup
+  - Line 3 (7500ms–9500ms): *"Sound and motion moving as one"* (Climax)
+  - Gap 3 (9500ms–10000ms): Drum fill
+  - Line 4 (10000ms–11500ms): *"Every rhythm shared in harmony"* (Resolution)
+  - Outro (11500ms–12000ms): Musical cadence
+- Prominently marked with `isDemonstration: true` and explicit disclosure label:
+  `"Demo Lyrics · Synchronized to 120 BPM Stem"`.
+
+#### 5. Lyrics UI & Hook (`src/features/lyrics/`)
+- Created `useLyrics` hook binding React components to `lyricsEngine`.
+- Built accessible `LyricsCard` component:
+  - **Active Line (Primary)**: Highlighted in Sky Cyan (`#38BDF8`), bold 20pt font, high-contrast elevated container (>7:1 WCAG AAA), optional speaker tag.
+  - **Previous Line (Secondary)**: Rendered with reduced emphasis (`opacity: 0.35`) and muted font.
+  - **Upcoming Lines (Secondary)**: Next 1–2 preview lines rendered in secondary text (`opacity: 0.6`).
+  - **Instrumental Transitions**: Explicit visual indicator (`"♫ Instrumental Break ♫"`, `"♫ Intro — Lyrics start shortly ♫"`) during gaps.
+  - **Demonstration Transparency**: Clear badge displaying `"Demo Lyrics · Synchronized to 120 BPM Stem"`.
+  - **Empty State**: Friendly fallback when tracks have no lyrics (`hasLyrics: false`).
+- Integrated into `app/index.tsx` home screen, establishing the complete sensory hierarchy: **READ (Lyrics) $\to$ SEE (Visuals) $\to$ FEEL (Haptics)**.
+
+#### 6. Verification & Automated Testing
+- Built comprehensive test suite in `scripts/test-lyrics-engine.js` (11 tests):
+  - Test 1: Strict metadata validation (timestamps, overlaps, ordering, empty text, mismatched IDs).
+  - Test 2: Lyrics timeline binary-search resolution (boundaries, gaps, active lines, pre/post).
+  - Test 3: Initial state and no-lyrics / unloaded fallback.
+  - Test 4: Active lyric highlighting and context tracking (previous, active, upcoming).
+  - Test 5: Explicit instrumental gap and transition handling.
+  - Test 6: Playback synchronization (pause, resume, and monotonic clock freezing).
+  - Test 7: Seeking (forward & backward) and timeline revision invalidation.
+  - Test 8: Track replacement, unload, and playback completion.
+  - Test 9: Resilience to delayed/dropped JS events (clock-authoritative recovery).
+  - Test 10: Lifecycle: subscription cleanup, no duplicates, and disposal.
+  - Test 11: Original demo track lyrics integrity (4 segments, 12s, transparency disclosure).
+  - Status: **ALL 11 TESTS PASSED**.
+- Verification across entire suite (`npm test`):
+  - Audio Engine: **13/13 PASSED**
+  - Synchronization & Event Scheduler: **12/12 PASSED**
+  - Haptic Engine: **10/10 PASSED**
+  - Visual Rhythm Engine: **10/10 PASSED**
+  - Synchronized Lyrics Engine: **11/11 PASSED**
+  - Total: **56/56 UNIT TESTS PASSED**.
+- TypeScript strict typecheck (`npm run typecheck`): **PASSED (0 errors)**.
+- Android bundling verification (`expo export --platform android`): **PASSED (1,186 modules bundled in 6.4s)**.
+
+---
+
+### Status
+Phase 2, Milestone 6 is **COMPLETED**. Proposed commit ready for user review and authorization.

@@ -4,9 +4,9 @@
  * Responsibilities:
  * - Real-time synchronized lyrics rendering.
  * - Active lyric line highlight with high-contrast accessibility.
- * - Auto-scrolling lyrics viewport anchored to synchronization clock.
- *
- * Status: Foundation milestone.
+ * - Previous line and upcoming preview lines.
+ * - Explicit instrumental gap / transition indicators.
+ * - Transparent demonstration disclosure for instrumental audio.
  */
 
 export interface LyricsDisplayOptions {
@@ -14,3 +14,8 @@ export interface LyricsDisplayOptions {
   showTranslation: boolean;
   highlightColor: string;
 }
+
+export * from './demoTrackLyrics';
+export * from './useLyrics';
+export { LyricsCard } from './components/LyricsCard';
+export * from '@/engines/lyrics';
