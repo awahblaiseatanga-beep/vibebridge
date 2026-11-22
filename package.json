@@ -25,13 +25,14 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/test-audio-engine.js && node scripts/test-synchronization.js && node scripts/test-haptic-engine.js && node scripts/test-visual-engine.js && node scripts/test-lyrics-engine.js && node scripts/test-live-concert.js",
+    "test": "node scripts/test-audio-engine.js && node scripts/test-synchronization.js && node scripts/test-haptic-engine.js && node scripts/test-visual-engine.js && node scripts/test-lyrics-engine.js && node scripts/test-live-concert.js && node scripts/test-signal-foundation.js",
     "test:audio": "node scripts/test-audio-engine.js",
     "test:sync": "node scripts/test-synchronization.js",
     "test:haptic": "node scripts/test-haptic-engine.js",
     "test:visual": "node scripts/test-visual-engine.js",
     "test:lyrics": "node scripts/test-lyrics-engine.js",
-    "test:live": "node scripts/test-live-concert.js"
+    "test:live": "node scripts/test-live-concert.js",
+    "test:signal": "node scripts/test-signal-foundation.js"
   },
   "private": true
 }
