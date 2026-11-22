@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   StyleSheet,
   Text,
   View,
   ScrollView,
+  TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '@/theme';
@@ -13,8 +14,11 @@ import { NowPlayingCard } from '@/features/playback';
 import { LyricsCard } from '@/features/lyrics';
 import { VisualRhythmSurface } from '@/features/visualizer';
 import { HapticControlCard } from '@/features/haptics';
+import { LiveConcertCard } from '@/features/concert';
 
 export default function HomeScreen() {
+  const [activeMode, setActiveMode] = useState<'concert' | 'prepared'>('concert');
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView
@@ -29,70 +33,121 @@ export default function HomeScreen() {
             </View>
             <View>
               <Text style={styles.brandTitle}>{APP_CONFIG.name}</Text>
-              <Text style={styles.versionBadge}>v{APP_CONFIG.version} • Milestone 6 (READ: Lyrics)</Text>
+              <Text style={styles.versionBadge}>v{APP_CONFIG.version} • Live Concert & Multi-Sensory MVP</Text>
             </View>
           </View>
           <Text style={styles.tagline}>{APP_CONFIG.tagline}</Text>
         </View>
 
-        {/* Accessibility & Sensory Mission Card */}
-        <Card style={styles.card} variant="elevated">
-          <Text style={styles.cardTitle}>Three Synchronized Senses</Text>
-          <Text style={styles.cardDescription}>
-            Designed for Deaf and hard-of-hearing music lovers to experience
-            every beat, rhythm, and lyric in harmony.
-          </Text>
-
-          <View style={styles.badgeRow}>
-            <SensoryBadge
-              channel="read"
-              label={SENSORY_CHANNELS.READ.label}
-              sublabel="Synchronized Lyrics"
-            />
-            <SensoryBadge
-              channel="see"
-              label={SENSORY_CHANNELS.SEE.label}
-              sublabel="Rhythm Visuals"
-            />
-            <SensoryBadge
-              channel="feel"
-              label={SENSORY_CHANNELS.FEEL.label}
-              sublabel="Tactile Haptics"
-            />
-          </View>
-        </Card>
-
-        {/* Connected Now Playing Transport Controls */}
-        <NowPlayingCard />
-
-        {/* READ Pillar: Synchronized Lyrics */}
-        <LyricsCard />
-
-        {/* SEE Pillar: Visual Rhythm Surface */}
-        <VisualRhythmSurface />
-
-        {/* FEEL Pillar: Tactile Haptics Controls */}
-        <HapticControlCard />
-
-        {/* Music Library Placeholder */}
-        <Card style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <Text style={styles.sectionHeader}>Music Library</Text>
-            <Text style={styles.counterText}>1 Bundled Demo</Text>
-          </View>
-          <View style={styles.placeholderContainer}>
-            <Text style={styles.placeholderIcon}>📂</Text>
-            <Text style={styles.placeholderTitle}>Local Library</Text>
-            <Text style={styles.placeholderSubtitle}>
-              Device file import, ID3 metadata indexing, and offline track storage will be integrated in the Library milestone.
+        {/* Primary Experience Mode Selector */}
+        <View style={styles.modeSelectorContainer}>
+          <TouchableOpacity
+            style={[
+              styles.modeTab,
+              activeMode === 'concert' && styles.modeTabActive,
+            ]}
+            onPress={() => setActiveMode('concert')}
+            accessibilityLabel="Switch to Live Concert Mode"
+          >
+            <Text
+              style={[
+                styles.modeTabText,
+                activeMode === 'concert' && styles.modeTabTextActive,
+              ]}
+            >
+              🎤 Live Concert Mode
             </Text>
-          </View>
-        </Card>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.modeTab,
+              activeMode === 'prepared' && styles.modeTabActive,
+            ]}
+            onPress={() => setActiveMode('prepared')}
+            accessibilityLabel="Switch to Prepared Track Demo Mode"
+          >
+            <Text
+              style={[
+                styles.modeTabText,
+                activeMode === 'prepared' && styles.modeTabTextActive,
+              ]}
+            >
+              🎵 Prepared Track Demo
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {activeMode === 'concert' ? (
+          <>
+            {/* Live Concert Mode Primary Interface */}
+            <LiveConcertCard />
+
+            {/* Ambient Visualizer Preview */}
+            <VisualRhythmSurface />
+          </>
+        ) : (
+          <>
+            {/* Accessibility & Sensory Mission Card */}
+            <Card style={styles.card} variant="elevated">
+              <Text style={styles.cardTitle}>Three Synchronized Senses</Text>
+              <Text style={styles.cardDescription}>
+                Designed for Deaf and hard-of-hearing music lovers to experience
+                every beat, rhythm, and lyric in harmony.
+              </Text>
+
+              <View style={styles.badgeRow}>
+                <SensoryBadge
+                  channel="read"
+                  label={SENSORY_CHANNELS.READ.label}
+                  sublabel="Synchronized Lyrics"
+                />
+                <SensoryBadge
+                  channel="see"
+                  label={SENSORY_CHANNELS.SEE.label}
+                  sublabel="Rhythm Visuals"
+                />
+                <SensoryBadge
+                  channel="feel"
+                  label={SENSORY_CHANNELS.FEEL.label}
+                  sublabel="Tactile Haptics"
+                />
+              </View>
+            </Card>
+
+            {/* Connected Now Playing Transport Controls */}
+            <NowPlayingCard />
+
+            {/* READ Pillar: Synchronized Lyrics */}
+            <LyricsCard />
+
+            {/* SEE Pillar: Visual Rhythm Surface */}
+            <VisualRhythmSurface />
+
+            {/* FEEL Pillar: Tactile Haptics Controls */}
+            <HapticControlCard />
+
+            {/* Music Library Placeholder */}
+            <Card style={styles.card}>
+              <View style={styles.cardHeaderRow}>
+                <Text style={styles.sectionHeader}>Music Library</Text>
+                <Text style={styles.counterText}>1 Bundled Demo</Text>
+              </View>
+              <View style={styles.placeholderContainer}>
+                <Text style={styles.placeholderIcon}>📂</Text>
+                <Text style={styles.placeholderTitle}>Local Library</Text>
+                <Text style={styles.placeholderSubtitle}>
+                  Device file import, ID3 metadata indexing, and offline track storage will be integrated in the Library milestone.
+                </Text>
+              </View>
+            </Card>
+          </>
+        )}
 
         {/* Target Platform Notice */}
         <View style={styles.footer}>
           <Text style={styles.footerText}>
-            Distribution Target: {APP_CONFIG.targetPlatform}
+            Distribution Target: {APP_CONFIG.targetPlatform} • Stage B-LIVE.2
           </Text>
         </View>
       </ScrollView>
@@ -209,6 +264,35 @@ const styles = StyleSheet.create({
     color: theme.colors.text.muted,
     textAlign: 'center',
     lineHeight: theme.typography.sizes.xs * theme.typography.lineHeights.normal,
+  },
+  modeSelectorContainer: {
+    flexDirection: 'row',
+    backgroundColor: theme.colors.background.surface,
+    padding: 4,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border.subtle,
+    gap: 6,
+  },
+  modeTab: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderRadius: theme.borderRadius.md,
+  },
+  modeTabActive: {
+    backgroundColor: theme.colors.background.elevated,
+    borderWidth: 1,
+    borderColor: theme.colors.sensory.feel,
+  },
+  modeTabText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: theme.colors.text.muted,
+  },
+  modeTabTextActive: {
+    color: theme.colors.text.primary,
+    fontWeight: '700',
   },
   footer: {
     alignItems: 'center',

@@ -18,6 +18,7 @@
     },
     "android": {
       "package": "com.vibebridge.app",
+      "permissions": ["RECORD_AUDIO"],
       "adaptiveIcon": {
         "backgroundColor": "#090D16",
         "foregroundImage": "./assets/android-icon-foreground.png",
