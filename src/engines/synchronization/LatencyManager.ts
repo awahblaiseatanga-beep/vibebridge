@@ -23,7 +23,7 @@
  *   triggerTimestampMs = Math.max(0, targetTimestampMs - leadTimeMs)
  */
 
-import { LatencyOffsets, SensoryChannel } from './types';
+import { LatencyOffsetListener, LatencyOffsets, SensoryChannel } from './types';
 
 export const DEFAULT_LATENCY_OFFSETS: LatencyOffsets = {
   audioOffsetMs: 0,
@@ -34,6 +34,7 @@ export const DEFAULT_LATENCY_OFFSETS: LatencyOffsets = {
 
 export class LatencyManager {
   private offsets: LatencyOffsets;
+  private offsetListeners = new Set<LatencyOffsetListener>();
 
   constructor(initialOffsets?: Partial<LatencyOffsets>) {
     this.offsets = {
@@ -51,10 +52,30 @@ export class LatencyManager {
       ...this.offsets,
       ...newOffsets,
     };
+    this.notifyListeners();
   }
 
   public reset(): void {
     this.offsets = { ...DEFAULT_LATENCY_OFFSETS };
+    this.notifyListeners();
+  }
+
+  public onOffsetsChange(listener: LatencyOffsetListener): () => void {
+    this.offsetListeners.add(listener);
+    return () => {
+      this.offsetListeners.delete(listener);
+    };
+  }
+
+  private notifyListeners(): void {
+    const current = this.getOffsets();
+    this.offsetListeners.forEach((listener) => {
+      try {
+        listener(current);
+      } catch (err) {
+        console.error('[LatencyManager] Listener error:', err);
+      }
+    });
   }
 
   private getChannelOffset(channel: SensoryChannel): number {

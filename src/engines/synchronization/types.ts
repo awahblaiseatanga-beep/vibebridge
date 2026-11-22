@@ -28,6 +28,8 @@ export interface LatencyOffsets {
   lyricsOffsetMs: number;
 }
 
+export type LatencyOffsetListener = (offsets: LatencyOffsets) => void;
+
 /**
  * Clean Master Clock Abstraction
  * Distributes authoritative timing information to all sensory consumers.

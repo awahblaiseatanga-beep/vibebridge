@@ -11,6 +11,7 @@ import { Card } from '@/components/common';
 import { formatMilliseconds } from '@/utils';
 import { eventScheduler } from '@/engines/event-scheduler';
 import { scheduleDemoTrackSensoryCues } from '@/features/rhythm';
+import { hapticEngine } from '@/engines/haptic';
 import { lyricsEngine } from '@/engines/lyrics';
 import { DEMO_TRACK_LYRICS } from '@/features/lyrics';
 import { usePlayback } from '../usePlayback';
@@ -58,12 +59,22 @@ export const NowPlayingCard: React.FC = () => {
     }
   }, [isIdle, load]);
 
-  // Synchronize demo track rhythmic sensory cues (haptic + visual) whenever timeline revision changes (track load or seek)
+  // Register synchronous score provider with eventScheduler on mount (Stage A.7.2.3.10)
+  // to eliminate passive useEffect delay (50-150ms) on timeline revision changes (track load, seek, stop)
   useEffect(() => {
+    eventScheduler.setScoreProvider((scheduler, rev) => {
+      hapticEngine.reset();
+      scheduleDemoTrackSensoryCues(scheduler, rev);
+    });
+    // If mounting into an already initialized active timeline, populate initial cues immediately
     if (timelineRevision > 0) {
+      hapticEngine.reset();
       scheduleDemoTrackSensoryCues(eventScheduler, timelineRevision);
     }
-  }, [timelineRevision]);
+    return () => {
+      eventScheduler.setScoreProvider(null);
+    };
+  }, []);
 
   const handlePlayPause = async () => {
     if (isIdle) {
@@ -78,6 +89,10 @@ export const NowPlayingCard: React.FC = () => {
     } else if (isPlaying) {
       await pause();
     } else if (isPaused || isStopped) {
+      // If replaying after natural completion at end of track, reset to 0ms
+      if (isStopped && durationMs > 0 && positionMs >= durationMs) {
+        await seek(0);
+      }
       await resume();
     }
   };

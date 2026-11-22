@@ -22,6 +22,14 @@ export interface EventSchedulerConfig {
    * Default: 50ms.
    */
   maxLatenessToleranceMs?: number;
+  /**
+   * Due-event dispatch tolerance in milliseconds (Stage A.7.1).
+   * Prevents minor sub-frame rounding discrepancies and OS timer scheduling jitter
+   * from deferring an event that is effectively due to the next polling interval.
+   * Clamped strictly to 3ms (imperceptible to human senses, <1/5th of a 60Hz frame).
+   * Default: 3ms.
+   */
+  dueEventToleranceMs?: number;
 }
 
 export interface InternalScheduledEvent<T = unknown> {
@@ -34,7 +42,15 @@ export interface InternalScheduledEvent<T = unknown> {
   payload: T;
 }
 
+export type ScoreProvider = (scheduler: IEventScheduler, timelineRevision: number) => void;
+
 export interface IEventScheduler {
+  /**
+   * Register a synchronous score provider that automatically rebuilds sensory cues
+   * whenever the timeline revision changes (e.g. seek, track load, stop).
+   */
+  setScoreProvider(provider: ScoreProvider | null): void;
+
   /**
    * Schedule a timestamped sensory event.
    */
@@ -69,6 +85,11 @@ export interface IEventScheduler {
    * Number of pending un-dispatched events in the queue.
    */
   getPendingEventCount(): number;
+
+  /**
+   * Returns a snapshot of pending queued events.
+   */
+  getPendingEvents(): readonly InternalScheduledEvent[];
 
   /**
    * Manually step the scheduler. Useful for deterministic testing and manual animation loops.

@@ -7,17 +7,27 @@
  * All musical timings originate from MasterClock and PriorityEventScheduler.
  */
 
-import { MasterClock, masterClock as defaultMasterClock } from '@/engines/synchronization';
+import {
+  LatencyManager,
+  latencyManager as defaultLatencyManager,
+  MasterClock,
+  masterClock as defaultMasterClock,
+} from '@/engines/synchronization';
 import { IEventScheduler } from '@/engines/event-scheduler';
 import { VisualCuePayload } from '@/features/rhythm';
 import {
   DEFAULT_VISUAL_SCALE_CONFIG,
   IVisualRhythmEngine,
+  VisualCalibrationOffset,
+  VisualCueAnimationPayload,
   VisualCueEvent,
+  VisualCueListener,
   VisualEngineConfig,
   VisualRhythmState,
   VisualScaleConfig,
   VisualStateListener,
+  VisualSyncTelemetryRecord,
+  VisualTelemetryListener,
 } from './types';
 import { VisualEventMapper } from './VisualEventMapper';
 
@@ -25,11 +35,23 @@ export class VisualRhythmEngine implements IVisualRhythmEngine {
   private enabled: boolean;
   private reducedMotion: boolean;
   private scales: VisualScaleConfig;
+  private latencyManager: LatencyManager;
 
   private state: VisualRhythmState;
   private currentRevision = 0;
 
+  // Stage A.7.2.1: Analytical Energy Accumulator State
+  private energyAccumulator: number = 0.05;
+  private lastCueTimestampMs: number = 0;
+  public static readonly E_REST: number = 0.05;
+  public static readonly LAMBDA: number = 2.5; // Exponential decay constant (1/s)
+
   private stateListeners = new Set<VisualStateListener>();
+  private cueListeners = new Set<VisualCueListener>();
+  private telemetryListeners = new Set<VisualTelemetryListener>();
+  private telemetryBuffer: VisualSyncTelemetryRecord[] = [];
+  private readonly MAX_TELEMETRY_RECORDS = 20;
+
   private activeScheduler: IEventScheduler | null = null;
   private schedulerUnsubscribe: (() => void) | null = null;
 
@@ -39,7 +61,8 @@ export class VisualRhythmEngine implements IVisualRhythmEngine {
 
   constructor(
     config?: VisualEngineConfig,
-    clock: MasterClock = defaultMasterClock
+    clock: MasterClock = defaultMasterClock,
+    latency: LatencyManager = defaultLatencyManager
   ) {
     this.enabled = config?.enabled ?? true;
     this.reducedMotion = config?.reducedMotion ?? false;
@@ -47,6 +70,7 @@ export class VisualRhythmEngine implements IVisualRhythmEngine {
       ...DEFAULT_VISUAL_SCALE_CONFIG,
       ...config?.scales,
     };
+    this.latencyManager = latency;
 
     const initialVisual = VisualEventMapper.getRestingVisual(this.scales);
 
@@ -152,12 +176,89 @@ export class VisualRhythmEngine implements IVisualRhythmEngine {
     const payload = event.payload;
     if (!payload) return;
 
-    const mapped = VisualEventMapper.mapCueToVisual(
+    // Stage A.7.2.1: Analytical Energy Accumulator Calculation
+    // Uses track audio timestamps (targetTimestampMs), NOT wall-clock time
+    const nowMs = event.targetTimestampMs;
+    const deltaSec = this.lastCueTimestampMs > 0
+      ? Math.max(0, (nowMs - this.lastCueTimestampMs) / 1000.0)
+      : 0.5; // Default for first cue
+    this.lastCueTimestampMs = nowMs;
+
+    // Exponential decay toward E_REST
+    const dissipated = VisualRhythmEngine.E_REST +
+      (this.energyAccumulator - VisualRhythmEngine.E_REST) * Math.exp(-VisualRhythmEngine.LAMBDA * deltaSec);
+
+    // Musical impulse delta based on role and weight
+    let deltaEnergy = 0.20 * payload.weight;
+    switch (payload.role) {
+      case 'downbeat':
+        deltaEnergy = 0.35 * payload.weight;
+        break;
+      case 'backbeat':
+        deltaEnergy = 0.22 * payload.weight;
+        break;
+      case 'accent':
+        deltaEnergy = 0.50 * payload.weight;
+        break;
+      case 'resolution':
+        deltaEnergy = 0.40 * payload.weight;
+        break;
+      default:
+        deltaEnergy = 0.20 * payload.weight;
+        break;
+    }
+
+    // Accumulate and clamp within [E_REST, 1.0]
+    this.energyAccumulator = Math.min(1.0, Math.max(VisualRhythmEngine.E_REST, dissipated + deltaEnergy));
+
+    // Map cue into complete 3-layer animation payload
+    const animationPayload = VisualEventMapper.mapCueToLayeredPayload(
       payload,
+      event,
+      this.energyAccumulator,
       this.scales,
       this.reducedMotion
     );
 
+    const mapped = {
+      visual: animationPayload.visual,
+      intensityLevel: animationPayload.intensityLevel,
+    };
+
+    // Record development-only timing telemetry (software timestamps only)
+    const onVisualCueMonotonicMs = this.getMonotonicTime();
+    const dispatchLatency = Math.max(0, onVisualCueMonotonicMs - (event.dispatchedAtMs || onVisualCueMonotonicMs));
+
+    const telemetryRecord: VisualSyncTelemetryRecord = {
+      id: event.id,
+      role: payload.role,
+      selectedVisualOffsetMs: this.latencyManager.getOffsets().visualOffsetMs,
+      targetTimestampMs: event.targetTimestampMs,
+      scheduledTimestampMs: event.scheduledTimestampMs,
+      schedulerDispatchMonotonicMs: event.dispatchedAtMs || onVisualCueMonotonicMs,
+      onVisualCueMonotonicMs,
+      animationInitiatedMonotonicMs: onVisualCueMonotonicMs,
+      dispatchLatencyMs: dispatchLatency,
+      setupLatencyMs: 0,
+      timelineRevision: event.timelineRevision,
+    };
+
+    if (this.telemetryBuffer.length >= this.MAX_TELEMETRY_RECORDS) {
+      this.telemetryBuffer.shift();
+    }
+    this.telemetryBuffer.push(telemetryRecord);
+    this.notifyTelemetry(telemetryRecord);
+
+    // 1. Immediately notify high-frequency direct animation listeners (imperative path, zero React render latency)
+    this.cueListeners.forEach((listener) => {
+      try {
+        listener(animationPayload);
+      } catch (err) {
+        console.error('[VisualRhythmEngine] Cue listener error:', err);
+      }
+    });
+
+    // 2. Update engine state for low-frequency informational queries
     this.state.activeCue = payload;
     this.state.currentBar = payload.bar;
     this.state.currentBeat = payload.beat;
@@ -208,18 +309,28 @@ export class VisualRhythmEngine implements IVisualRhythmEngine {
     this.currentRevision = initialSnapshot.timelineRevision;
     this.state.isPaused = initialSnapshot.status !== 'playing';
     this.state.isBuffering = initialSnapshot.isBuffering;
+    this.state.isRest =
+      initialSnapshot.status !== 'playing' ||
+      (initialSnapshot.durationMs > 0 && initialSnapshot.positionMs >= 11800);
 
     this.clockStatusUnsubscribe = clock.onStatusChange((status) => {
-      const wasPaused = this.state.isPaused;
       this.state.isPaused = status !== 'playing';
 
-      if (status === 'paused' || status === 'stopped' || status === 'idle' || status === 'error') {
-        // Freeze visual animations and settle to calm resting state
+      if (status === 'paused') {
+        // Stage A.7.2.1: Pause suspends visual animation and preserves energy state
         this.state.visual = VisualEventMapper.getRestingVisual(this.scales);
         this.state.isRest = true;
-      } else if (status === 'playing' && wasPaused) {
-        // If resuming, clear paused flag; active cue will update on next scheduled event
+      } else if (status === 'stopped' || status === 'idle' || status === 'error') {
+        // Stage A.7.2.1: Stop/idle resets energy to E_REST
+        this.resetEnergy();
+        this.state.visual = VisualEventMapper.getRestingVisual(this.scales);
+        this.state.isRest = true;
+        this.state.activeCue = null;
+      } else if (status === 'playing') {
+        // Active playback: clear paused flag and establish non-resting active groove state.
+        // Prevents the first visual beat (0ms) from being cancelled by a stale resting state.
         this.state.isPaused = false;
+        this.state.isRest = false;
       }
 
       this.emitState();
@@ -229,6 +340,8 @@ export class VisualRhythmEngine implements IVisualRhythmEngine {
       // 1. Revision invalidation check (Seek or Track Change)
       if (clockSnapshot.timelineRevision !== this.currentRevision) {
         this.currentRevision = clockSnapshot.timelineRevision;
+        // Stage A.7.2.1: Seek and track change reset energy to E_REST and invalidate stale events
+        this.resetEnergy();
         this.state.activeCue = null;
         this.state.visual = VisualEventMapper.getRestingVisual(this.scales);
         this.state.intensityLevel = 'rest';
@@ -247,13 +360,15 @@ export class VisualRhythmEngine implements IVisualRhythmEngine {
         return;
       }
 
-      // 3. Musical Rest Check (between Bar 6 resolution at 11500ms and track loop at 12000ms)
-      // When playback is actively playing past 11500ms without new beat events:
+      // 3. Musical Rest Check (between Bar 6 resolution completion at 11800ms and track loop/end at 12000ms)
+      // The Bar 6 Beat 4 resolution cue triggers at ~11484ms with a 300ms envelope (40ms attack + 260ms decay),
+      // completing at 11784ms (11800ms audio timeline position).
+      // Transition to resting state occurs strictly AFTER the 300ms resolution animation envelope has fully finished:
       if (
         clockSnapshot.status === 'playing' &&
         !clockSnapshot.isBuffering &&
         clockSnapshot.durationMs > 0 &&
-        clockSnapshot.positionMs >= 11600 &&
+        clockSnapshot.positionMs >= 11800 &&
         !this.state.isRest
       ) {
         this.state.isRest = true;
@@ -284,6 +399,72 @@ export class VisualRhythmEngine implements IVisualRhythmEngine {
     };
   }
 
+  public onVisualCue(listener: VisualCueListener): () => void {
+    this.cueListeners.add(listener);
+    return () => {
+      this.cueListeners.delete(listener);
+    };
+  }
+
+  public onTelemetry(listener: VisualTelemetryListener): () => void {
+    this.telemetryListeners.add(listener);
+    const latest = this.getLatestTelemetry();
+    if (latest) {
+      try {
+        listener(latest);
+      } catch (err) {
+        console.error('[VisualRhythmEngine] Telemetry listener error:', err);
+      }
+    }
+    return () => {
+      this.telemetryListeners.delete(listener);
+    };
+  }
+
+  public getLatestTelemetry(): VisualSyncTelemetryRecord | null {
+    return this.telemetryBuffer.length > 0
+      ? this.telemetryBuffer[this.telemetryBuffer.length - 1]
+      : null;
+  }
+
+  public getTelemetryHistory(): VisualSyncTelemetryRecord[] {
+    return [...this.telemetryBuffer];
+  }
+
+  public clearTelemetry(): void {
+    this.telemetryBuffer = [];
+  }
+
+  public recordAnimationInitiated(cueId: string, timestampMs?: number): void {
+    const record = this.telemetryBuffer.find((r) => r.id === cueId);
+    if (record) {
+      const now = timestampMs !== undefined ? timestampMs : this.getMonotonicTime();
+      record.animationInitiatedMonotonicMs = now;
+      record.setupLatencyMs = Math.max(0, now - record.onVisualCueMonotonicMs);
+      this.notifyTelemetry(record);
+    }
+  }
+
+  public setVisualCalibrationOffset(offsetMs: VisualCalibrationOffset): void {
+    this.latencyManager.setOffsets({ visualOffsetMs: offsetMs });
+  }
+
+  public getVisualCalibrationOffset(): VisualCalibrationOffset {
+    const current = this.latencyManager.getOffsets().visualOffsetMs;
+    if (current === 40 || current === 60) return current;
+    return 16;
+  }
+
+  private notifyTelemetry(record: VisualSyncTelemetryRecord): void {
+    this.telemetryListeners.forEach((listener) => {
+      try {
+        listener(record);
+      } catch (err) {
+        console.error('[VisualRhythmEngine] Telemetry listener error:', err);
+      }
+    });
+  }
+
   private emitState(): void {
     const snapshot = this.getState();
     this.stateListeners.forEach((listener) => {
@@ -295,7 +476,17 @@ export class VisualRhythmEngine implements IVisualRhythmEngine {
     });
   }
 
+  public getEnergyAccumulator(): number {
+    return this.energyAccumulator;
+  }
+
+  public resetEnergy(): void {
+    this.energyAccumulator = VisualRhythmEngine.E_REST;
+    this.lastCueTimestampMs = 0;
+  }
+
   public reset(): void {
+    this.resetEnergy();
     this.state.activeCue = null;
     this.state.currentBar = 1;
     this.state.currentBeat = 1;
@@ -313,6 +504,9 @@ export class VisualRhythmEngine implements IVisualRhythmEngine {
     this.detachScheduler();
     this.detachMasterClock();
     this.stateListeners.clear();
+    this.cueListeners.clear();
+    this.telemetryListeners.clear();
+    this.clearTelemetry();
     this.reset();
   }
 }

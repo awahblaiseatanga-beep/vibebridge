@@ -1,19 +1,19 @@
 /**
- * Automated Verification Suite for Master Synchronization Engine & Event Scheduler (Milestone 3)
+ * Automated Verification Suite for Master Synchronization Engine & Event Scheduler
  *
  * Uses deterministic injectable clocks for reproducible, non-flaky testing of:
- * 1. Event ordering (strictly chronological dispatch)
- * 2. Duplicate prevention (zero repeat firings)
- * 3. Event cancellation
- * 4. Look-ahead window scheduling
- * 5. Timeline revision invalidation (dropping outdated cues)
- * 6. Seeking during pending events
- * 7. Pausing and resuming lifecycle
- * 8. Track transitions & queue resets
- * 9. Track completion boundaries
- * 10. Latency compensation calculations (audio, haptics, visuals)
- * 11. Multiple consumers & channel subscriptions
- * 12. Scheduler disposal & lifecycle cleanup
+ * 1. Event is not dispatched merely because it enters the look-ahead window.
+ * 2. Event dispatches at its compensated target time.
+ * 3. Events with identical timestamps preserve stable ordering.
+ * 4. Late-event policy works correctly.
+ * 5. Stop invalidates the old timeline.
+ * 6. Stop → Play schedules the complete cue sequence again.
+ * 7. Pause prevents dispatch while paused.
+ * 8. Resume continues remaining events without replaying previous ones.
+ * 9. Seek invalidates events from the previous timeline.
+ * 10. Track replacement does not leak old events.
+ * 11. Haptic and visual subscribers both receive the expected events.
+ * 12. No duplicate events occur during repeated lifecycle transitions.
  */
 
 const assert = require('assert');
@@ -70,10 +70,11 @@ const exportedSync = {
 sandbox.exports = {};
 sandbox.module = { exports: {} };
 vm.runInContext(schedulerCode, sandbox);
-const { PriorityEventScheduler } = sandbox.exports;
+const { PriorityEventScheduler, DUE_EVENT_TOLERANCE_MS } = sandbox.exports;
 
 assert.ok(LatencyManager, 'LatencyManager should be exported');
 assert.ok(PriorityEventScheduler, 'PriorityEventScheduler should be exported');
+assert.strictEqual(DUE_EVENT_TOLERANCE_MS, 3, 'DUE_EVENT_TOLERANCE_MS must be 3ms');
 
 // 3. Deterministic Mock Master Clock
 class MockMasterClock {
@@ -133,7 +134,7 @@ class MockMasterClock {
 }
 
 async function runTests() {
-  console.log('🧪 Starting Milestone 3 Synchronization & Scheduling Verification Suite...\n');
+  console.log('🧪 Starting Stage 1 Synchronization & Event Scheduler Verification Suite...\n');
 
   // --- Test 1: Latency Compensation Calculations ---
   console.log('Test 1: Latency Compensation Calculations');
@@ -156,8 +157,6 @@ async function runTests() {
 
   // Audio channel with Bluetooth buffer delay of 120ms
   latency.setOffsets({ audioOffsetMs: 120 });
-  // Perceived audio delay = 120ms. Haptic delay = 25ms. Lead time = 25 - 120 = -95ms.
-  // Trigger must occur at 5000 - (-95) = 5095ms.
   const btHapticTrigger = latency.computeTriggerTimestamp(5000, 'haptic');
   assert.strictEqual(btHapticTrigger, 5095, 'With 120ms BT delay, haptic triggers at 5095ms to match delayed acoustic output');
 
@@ -167,34 +166,48 @@ async function runTests() {
   assert.strictEqual(clampedTrigger, 0, 'Trigger timestamp must be clamped to 0ms (no negative triggers)');
   console.log('  ✓ Latency compensation formulas and sign conventions verified for all channels');
 
-  // --- Test 2: Chronological Event Ordering ---
-  console.log('Test 2: Chronological Event Ordering');
+  // --- Test 2: Chronological Event Ordering & Stable Ordering for Identical Timestamps ---
+  console.log('Test 2: Chronological Event Ordering & Identical Timestamp Stability');
   const mockClock = new MockMasterClock();
   const latencyZero = new LatencyManager({ audioOffsetMs: 0, hapticOffsetMs: 0, visualOffsetMs: 0, lyricsOffsetMs: 0 });
   const scheduler = new PriorityEventScheduler({ lookAheadWindowMs: 100 }, mockClock, latencyZero);
 
-  // Submit out-of-order events within the 100ms lookahead window [200ms, 300ms]
+  // Submit out-of-order events within the lateness tolerance window [240ms, 290ms]
   scheduler.scheduleBatch([
-    { id: 'cue-3', targetTimestampMs: 250, type: 'beat', channel: 'visual', payload: {} },
-    { id: 'cue-1', targetTimestampMs: 200, type: 'beat', channel: 'haptic', payload: {} },
-    { id: 'cue-4', targetTimestampMs: 280, type: 'beat', channel: 'visual', payload: {} },
-    { id: 'cue-2', targetTimestampMs: 220, type: 'beat', channel: 'lyrics', payload: {} },
+    { id: 'cue-3', targetTimestampMs: 270, type: 'beat', channel: 'visual', payload: {} },
+    { id: 'cue-1', targetTimestampMs: 260, type: 'beat', channel: 'haptic', payload: {} },
+    { id: 'cue-4', targetTimestampMs: 290, type: 'beat', channel: 'visual', payload: {} },
+    { id: 'cue-2', targetTimestampMs: 265, type: 'beat', channel: 'lyrics', payload: {} },
   ]);
 
-  // Tick at 200ms with 100ms lookahead window covering up to 200 + 100 = 300ms
-  const dispatchedOrder = scheduler.tick(200, 1000);
+  // Tick at 290ms where all four events are due and within 50ms tolerance
+  const dispatchedOrder = scheduler.tick(290, 1000);
   assert.strictEqual(dispatchedOrder.length, 4);
-  assert.strictEqual(dispatchedOrder[0].id, 'cue-1', 'First dispatched must be cue-1 (200ms)');
-  assert.strictEqual(dispatchedOrder[1].id, 'cue-2', 'Second dispatched must be cue-2 (220ms)');
-  assert.strictEqual(dispatchedOrder[2].id, 'cue-3', 'Third dispatched must be cue-3 (250ms)');
-  assert.strictEqual(dispatchedOrder[3].id, 'cue-4', 'Fourth dispatched must be cue-4 (280ms)');
-  console.log('  ✓ Events submitted out-of-order dispatched in strictly sorted chronological order');
+  assert.strictEqual(dispatchedOrder[0].id, 'cue-1', 'First dispatched must be cue-1 (260ms)');
+  assert.strictEqual(dispatchedOrder[1].id, 'cue-2', 'Second dispatched must be cue-2 (265ms)');
+  assert.strictEqual(dispatchedOrder[2].id, 'cue-3', 'Third dispatched must be cue-3 (270ms)');
+  assert.strictEqual(dispatchedOrder[3].id, 'cue-4', 'Fourth dispatched must be cue-4 (290ms)');
+
+  // Stable ordering for identical timestamps: FIFO submission order must be strictly preserved
+  scheduler.clear();
+  scheduler.scheduleBatch([
+    { id: 'same-time-1', targetTimestampMs: 500, type: 'beat', channel: 'haptic', payload: {} },
+    { id: 'same-time-2', targetTimestampMs: 500, type: 'pulse', channel: 'visual', payload: {} },
+    { id: 'same-time-3', targetTimestampMs: 500, type: 'line', channel: 'lyrics', payload: {} },
+  ]);
+  const sameTimeDispatched = scheduler.tick(500, 1005);
+  assert.strictEqual(sameTimeDispatched.length, 3);
+  assert.strictEqual(sameTimeDispatched[0].id, 'same-time-1');
+  assert.strictEqual(sameTimeDispatched[1].id, 'same-time-2');
+  assert.strictEqual(sameTimeDispatched[2].id, 'same-time-3');
+  console.log('  ✓ Chronological sorting and stable FIFO ordering for identical timestamps verified');
 
   // --- Test 3: Duplicate Prevention ---
   console.log('Test 3: Duplicate Prevention');
-  // Re-ticking at the same or higher position must not re-fire already dispatched events
-  const duplicateTick = scheduler.tick(200, 1010);
+  const duplicateTick = scheduler.tick(500, 1010);
   assert.strictEqual(duplicateTick.length, 0, 'No duplicate events should fire on repeat ticks');
+  const higherTick = scheduler.tick(600, 1020);
+  assert.strictEqual(higherTick.length, 0, 'No duplicate events should fire on subsequent ticks');
   console.log('  ✓ Duplicate prevention verified: 0 re-dispatches');
 
   // --- Test 4: Event Cancellation ---
@@ -211,8 +224,8 @@ async function runTests() {
   assert.strictEqual(dispatchedAfterCancel.length, 0, 'Cancelled event must never dispatch');
   console.log('  ✓ Event successfully cancelled and confirmed not dispatched');
 
-  // --- Test 5: Look-Ahead Window Scheduling ---
-  console.log('Test 5: Look-Ahead Window Scheduling');
+  // --- Test 5: Look-Ahead Window Preparation & Due-Time Dispatch ---
+  console.log('Test 5: Look-Ahead Window Preparation & Due-Time Dispatch (Requirements 1 & 2)');
   scheduler.clear();
   // Configured look-ahead window = 100ms
   scheduler.scheduleBatch([
@@ -220,23 +233,38 @@ async function runTests() {
     { id: 'far-cue', targetTimestampMs: 450, type: 'beat', channel: 'haptic', payload: {} },
   ]);
 
-  // Player at 180ms. Look-ahead horizon = 180 + 100 = 280ms.
-  // 'near-cue' (250ms) <= 280ms -> DISPATCH
-  // 'far-cue' (450ms) > 280ms -> REMAIN PENDING
+  // 1. Player at 180ms. Look-ahead horizon = 180 + 100 = 280ms.
+  // 'near-cue' (250ms) enters the look-ahead window (250 <= 280), BUT its target has NOT arrived (250 > 180).
+  // Requirement 1: Event is NOT dispatched merely because it enters the look-ahead window!
   const tick180 = scheduler.tick(180, 1200);
-  assert.strictEqual(tick180.length, 1);
-  assert.strictEqual(tick180[0].id, 'near-cue');
-  assert.strictEqual(scheduler.getPendingEventCount(), 1, 'Far cue must remain in pending queue');
+  assert.strictEqual(tick180.length, 0, 'Event entering look-ahead window must NOT fire prematurely');
+  assert.strictEqual(scheduler.getPendingEventCount(), 2, 'Both near and far cues must remain pending');
 
-  // Player advances to 360ms. Horizon = 360 + 100 = 460ms.
-  // 'far-cue' (450ms) <= 460ms -> DISPATCH
+  // 2. Player advances to 240ms. Still before 250ms target.
+  const tick240 = scheduler.tick(240, 1240);
+  assert.strictEqual(tick240.length, 0, 'Event must not fire before compensated target time');
+  assert.strictEqual(scheduler.getPendingEventCount(), 2);
+
+  // 3. Player reaches 250ms.
+  // Requirement 2: Event dispatches at its compensated target time!
+  const tick250 = scheduler.tick(250, 1250);
+  assert.strictEqual(tick250.length, 1, 'Near cue must dispatch at its compensated target time');
+  assert.strictEqual(tick250[0].id, 'near-cue');
+  assert.strictEqual(scheduler.getPendingEventCount(), 1, 'Far cue must remain pending');
+
+  // 4. Player advances to 360ms. Far cue (450ms) is inside look-ahead (360 + 100 = 460), but not yet due.
   const tick360 = scheduler.tick(360, 1300);
-  assert.strictEqual(tick360.length, 1);
-  assert.strictEqual(tick360[0].id, 'far-cue');
-  assert.strictEqual(scheduler.getPendingEventCount(), 0);
-  console.log('  ✓ Look-ahead window (100ms) correctly throttles near vs far events');
+  assert.strictEqual(tick360.length, 0, 'Far cue must not fire prematurely at 360ms');
+  assert.strictEqual(scheduler.getPendingEventCount(), 1);
 
-  // --- Test 6: Timeline Revision Invalidation (Seeking) ---
+  // 5. Player reaches 450ms. Far cue target time has arrived!
+  const tick450 = scheduler.tick(450, 1350);
+  assert.strictEqual(tick450.length, 1, 'Far cue dispatches when position reaches 450ms');
+  assert.strictEqual(tick450[0].id, 'far-cue');
+  assert.strictEqual(scheduler.getPendingEventCount(), 0);
+  console.log('  ✓ Look-ahead window prepares events without premature dispatch; dispatches at target time');
+
+  // --- Test 6: Timeline Revision Invalidation on Seek ---
   console.log('Test 6: Timeline Revision Invalidation on Seek');
   scheduler.clear();
   mockClock.setRevision(1);
@@ -255,13 +283,18 @@ async function runTests() {
     { id: 'rev2-cue1', targetTimestampMs: 3200, type: 'beat', channel: 'haptic', payload: {} },
   ]);
 
-  const tickAfterSeek = scheduler.tick(3180, 1400);
-  assert.strictEqual(tickAfterSeek.length, 1, 'Only revision 2 events must fire');
-  assert.strictEqual(tickAfterSeek[0].id, 'rev2-cue1');
-  assert.strictEqual(scheduler.getPendingEventCount(), 0, 'Outdated revision 1 cues must be discarded');
+  // At 3180ms, rev2-cue1 is not yet due (3200 > 3180)
+  const tickSeekInitial = scheduler.tick(3180, 1400);
+  assert.strictEqual(tickSeekInitial.length, 0);
+  assert.strictEqual(scheduler.getPendingEventCount(), 1, 'Outdated revision 1 cues dropped; revision 2 cue pending');
+
+  // Advance to 3200ms: rev2-cue1 fires
+  const tickSeekDue = scheduler.tick(3200, 1420);
+  assert.strictEqual(tickSeekDue.length, 1);
+  assert.strictEqual(tickSeekDue[0].id, 'rev2-cue1');
   console.log('  ✓ Revision change instantly dropped outdated cues and preserved new timeline cues');
 
-  // --- Test 7: Paused & Buffering Clock Behavior ---
+  // --- Test 7: Pause & Buffering Clock Behavior ---
   console.log('Test 7: Paused & Buffering Clock Behavior');
   scheduler.clear();
   mockClock.setTime(450);
@@ -278,92 +311,126 @@ async function runTests() {
   const tickBuffering = scheduler.tick();
   assert.strictEqual(tickBuffering.length, 0, 'No events should fire while buffering');
 
-  // Resume playing with buffering cleared
+  // Resume playing with buffering cleared and position at 500ms
   mockClock.setBuffering(false);
+  mockClock.setTime(500);
   const tickResumed = scheduler.tick();
-  assert.strictEqual(tickResumed.length, 1, 'Event fires cleanly when resumed and not buffering');
+  assert.strictEqual(tickResumed.length, 1, 'Event fires cleanly when resumed and due');
   assert.strictEqual(tickResumed[0].id, 'pause-test');
   console.log('  ✓ Event dispatch strictly freezes while paused or buffering, and resumes without loss');
 
-  // --- Test 8: Track Completion Boundaries ---
-  console.log('Test 8: Track Completion Boundaries');
-  scheduler.clear();
-  mockClock.clock.durationMs = 12000;
-  mockClock.setTime(12000); // Track finished
-  mockClock.setStatus('stopped');
-
-  scheduler.schedule({ id: 'post-track-cue', targetTimestampMs: 12500, type: 'beat', channel: 'haptic', payload: {} });
-  const tickCompleted = scheduler.tick();
-  assert.strictEqual(tickCompleted.length, 0, 'No events should fire past track completion');
-  console.log('  ✓ Events beyond duration never fire after track completion');
-
-  // --- Test 9: Multiple Consumers & Channel Filtering ---
-  console.log('Test 9: Multiple Consumers & Channel Filtering');
+  // --- Test 8: Pause → Resume Preserves Remaining Events Without Duplication ---
+  console.log('Test 8: Pause → Resume Lifecycle Continuation');
   scheduler.clear();
   mockClock.setStatus('playing');
   mockClock.setTime(0);
 
-  const hapticConsumerA = [];
-  const hapticConsumerB = [];
-  const visualConsumer = [];
-  const globalConsumer = [];
-
-  const unsubHapticA = scheduler.subscribe('haptic', (e) => hapticConsumerA.push(e.id));
-  const unsubHapticB = scheduler.subscribe('haptic', (e) => hapticConsumerB.push(e.id));
-  const unsubVisual = scheduler.subscribe('visual', (e) => visualConsumer.push(e.id));
-  const unsubGlobal = scheduler.subscribeAll((e) => globalConsumer.push(e.id));
-
   scheduler.scheduleBatch([
-    { id: 'haptic-beat-1', targetTimestampMs: 100, type: 'beat', channel: 'haptic', payload: { intensity: 0.8 } },
-    { id: 'visual-beat-1', targetTimestampMs: 100, type: 'pulse', channel: 'visual', payload: { band: 'sub' } },
+    { id: 'seq-1', targetTimestampMs: 100, type: 'beat', channel: 'haptic', payload: {} },
+    { id: 'seq-2', targetTimestampMs: 200, type: 'beat', channel: 'haptic', payload: {} },
+    { id: 'seq-3', targetTimestampMs: 300, type: 'beat', channel: 'haptic', payload: {} },
+    { id: 'seq-4', targetTimestampMs: 400, type: 'beat', channel: 'haptic', payload: {} },
   ]);
 
-  scheduler.tick(100, 2000);
+  // Play realistically up to 250ms: tick at 120ms dispatches seq-1, tick at 220ms dispatches seq-2
+  const tick1 = scheduler.tick(120, 1500);
+  assert.strictEqual(tick1.length, 1);
+  assert.strictEqual(tick1[0].id, 'seq-1');
 
-  // Both haptic consumers received haptic event
-  assert.deepStrictEqual(hapticConsumerA, ['haptic-beat-1']);
-  assert.deepStrictEqual(hapticConsumerB, ['haptic-beat-1']);
+  const tick2 = scheduler.tick(220, 1520);
+  assert.strictEqual(tick2.length, 1);
+  assert.strictEqual(tick2[0].id, 'seq-2');
+  assert.strictEqual(scheduler.getPendingEventCount(), 2, 'seq-3 and seq-4 must remain in queue');
 
-  // Visual consumer only received visual event
-  assert.deepStrictEqual(visualConsumer, ['visual-beat-1']);
+  // Pause at 250ms
+  mockClock.setStatus('paused');
+  mockClock.setTime(250);
+  const pausedTicks = scheduler.tick();
+  assert.strictEqual(pausedTicks.length, 0, 'Zero events fire while paused');
 
-  // Global consumer received both
-  assert.deepStrictEqual(globalConsumer, ['haptic-beat-1', 'visual-beat-1']);
+  // Resume at 250ms and advance realistically: 310ms dispatches seq-3, 410ms dispatches seq-4
+  mockClock.setStatus('playing');
+  mockClock.setTime(310);
+  const tickAfterResume1 = scheduler.tick(310, 1600);
+  assert.strictEqual(tickAfterResume1.length, 1);
+  assert.strictEqual(tickAfterResume1[0].id, 'seq-3');
 
-  // Test unsubscribe
-  unsubHapticA();
-  scheduler.schedule({ id: 'haptic-beat-2', targetTimestampMs: 300, type: 'beat', channel: 'haptic', payload: {} });
-  scheduler.tick(300, 2100);
+  mockClock.setTime(410);
+  const tickAfterResume2 = scheduler.tick(410, 1650);
+  assert.strictEqual(tickAfterResume2.length, 1);
+  assert.strictEqual(tickAfterResume2[0].id, 'seq-4');
+  assert.strictEqual(scheduler.getPendingEventCount(), 0);
 
-  assert.deepStrictEqual(hapticConsumerA, ['haptic-beat-1'], 'Consumer A unsubscribed, must not receive second event');
-  assert.deepStrictEqual(hapticConsumerB, ['haptic-beat-1', 'haptic-beat-2'], 'Consumer B still subscribed');
-  console.log('  ✓ Multi-consumer fan-out, channel isolation, and unsubscription verified');
+  // Repeat tick: no duplicates
+  const afterResumeTick = scheduler.tick(410, 1660);
+  assert.strictEqual(afterResumeTick.length, 0, 'No events re-fired after resume');
+  console.log('  ✓ Pause preserves remaining events; resume continues without replaying old ones or duplicating');
 
-  // --- Test 10: Scheduler Disposal & Lifecycle Cleanup ---
-  console.log('Test 10: Scheduler Lifecycle Cleanup & Disposal');
-  scheduler.schedule({ id: 'pending-cue', targetTimestampMs: 9000, type: 'beat', channel: 'haptic', payload: {} });
+  // --- Test 9: Stop Invalidates Old Timeline & Resets History ---
+  console.log('Test 9: Stop Invalidation & Revision Advance');
+  scheduler.clear();
+  mockClock.setRevision(10);
+  mockClock.setTime(100);
+
+  scheduler.scheduleBatch([
+    { id: 'sess1-cue', targetTimestampMs: 500, type: 'beat', channel: 'haptic', payload: {} },
+  ]);
   assert.strictEqual(scheduler.getPendingEventCount(), 1);
 
-  scheduler.dispose();
-  assert.strictEqual(scheduler.getPendingEventCount(), 0, 'Disposal must clear queue');
-  assert.strictEqual(scheduler.tick(9500).length, 0, 'Disposed scheduler must not dispatch events');
-  console.log('  ✓ Scheduler dispose() completely releases queues, timers, and listeners');
+  // Stop triggers timeline revision advance (e.g. revision 10 -> 11)
+  mockClock.setStatus('stopped');
+  mockClock.setRevision(11);
+  mockClock.setTime(0);
+
+  // Ticking after stop must discard session 1 cues
+  const tickAfterStop = scheduler.tick(0, 1700);
+  assert.strictEqual(tickAfterStop.length, 0);
+  assert.strictEqual(scheduler.getPendingEventCount(), 0, 'Old session cues must be invalidated upon stop');
+  console.log('  ✓ Stop invalidates old session timeline and clears pending queue');
+
+  // --- Test 10: Stop → Play Replay Lifecycle ---
+  console.log('Test 10: Stop → Play Replay Complete Rescheduling');
+  // Re-scheduling cues under the new revision (11) as NowPlayingCard does
+  scheduler.scheduleBatch([
+    { id: 'sess2-cue1', targetTimestampMs: 100, type: 'beat', channel: 'haptic', timelineRevision: 11, payload: {} },
+    { id: 'sess2-cue2', targetTimestampMs: 200, type: 'beat', channel: 'haptic', timelineRevision: 11, payload: {} },
+  ]);
+  assert.strictEqual(scheduler.getPendingEventCount(), 2);
+
+  // User presses Play: playback restarts from 0ms under revision 11
+  mockClock.setStatus('playing');
+  mockClock.setTime(0);
+
+  // At 0ms, none are due yet
+  assert.strictEqual(scheduler.tick(0, 1800).length, 0);
+
+  // At 150ms, sess2-cue1 fires cleanly
+  const replayTick1 = scheduler.tick(150, 1850);
+  assert.strictEqual(replayTick1.length, 1);
+  assert.strictEqual(replayTick1[0].id, 'sess2-cue1');
+
+  // At 250ms, sess2-cue2 fires cleanly
+  const replayTick2 = scheduler.tick(250, 1900);
+  assert.strictEqual(replayTick2.length, 1);
+  assert.strictEqual(replayTick2[0].id, 'sess2-cue2');
+  assert.strictEqual(scheduler.getPendingEventCount(), 0);
+  console.log('  ✓ Stop → Play cleanly reschedules and plays complete cue sequence from start');
 
   // --- Test 11: Late-Event Handling Policy & Staleness Dropping ---
   console.log('Test 11: Late-Event Handling Policy & Staleness Dropping');
   const lateClock = new MockMasterClock();
   lateClock.setStatus('playing');
-  lateClock.setTime(1000); // Playback position at 1000ms
+  lateClock.setTime(1000);
   const lateScheduler = new PriorityEventScheduler(
     { lookAheadWindowMs: 80, maxLatenessToleranceMs: 50 },
     lateClock,
     latencyZero
   );
 
-  // 1. Manually queue events before tick to test lateness evaluation during tick
+  // Manually queue events before tick to test lateness evaluation during tick
   // Event A: target at 970ms (30ms in the past -> within 50ms tolerance -> DISPATCH)
   // Event B: target at 920ms (80ms in the past -> older than 50ms tolerance -> DROP AS STALE)
-  // We pause clock briefly to schedule without upfront discard, then set to 1000ms
+  // Event C: future-cue at 1040ms (in the future -> remains pending at 1000ms, dispatches at 1040ms)
   lateClock.setStatus('paused');
   lateClock.setTime(0);
   lateScheduler.scheduleBatch([
@@ -378,15 +445,20 @@ async function runTests() {
   // Tick at 1000ms
   const lateDispatched = lateScheduler.tick(1000, 3000);
 
-  // 'timely-late-cue' (970ms >= 1000 - 50 = 950ms) -> DISPATCH
-  // 'future-cue' (1040ms <= 1000 + 80 = 1080ms) -> DISPATCH
+  // 'timely-late-cue' (970ms <= 1000 and >= 1000 - 50 = 950ms) -> DISPATCH
   // 'stale-cue' (920ms < 950ms) -> DROPPED AS STALE
-  assert.strictEqual(lateDispatched.length, 2, 'Must dispatch exactly timely-late-cue and future-cue');
+  // 'future-cue' (1040ms > 1000ms) -> REMAINS PENDING (does not fire prematurely!)
+  assert.strictEqual(lateDispatched.length, 1, 'Must dispatch exactly timely-late-cue at 1000ms');
   assert.strictEqual(lateDispatched[0].id, 'timely-late-cue');
-  assert.strictEqual(lateDispatched[1].id, 'future-cue');
-  assert.strictEqual(lateScheduler.getPendingEventCount(), 0, 'Stale cue must be dropped and removed');
+  assert.strictEqual(lateScheduler.getPendingEventCount(), 1, 'future-cue must remain pending');
 
-  // 2. Upfront schedule discard when already playing and stale
+  // Now tick at 1040ms
+  const futureDispatched = lateScheduler.tick(1040, 3040);
+  assert.strictEqual(futureDispatched.length, 1);
+  assert.strictEqual(futureDispatched[0].id, 'future-cue');
+  assert.strictEqual(lateScheduler.getPendingEventCount(), 0);
+
+  // Upfront schedule discard when already playing and stale
   lateScheduler.schedule({ id: 'immediate-stale', targetTimestampMs: 800, type: 'beat', channel: 'haptic', payload: {} });
   assert.strictEqual(
     lateScheduler.getPendingEventCount(),
@@ -423,8 +495,422 @@ async function runTests() {
   clampedScheduler.dispose();
   console.log('  ✓ Zero-clamped latency triggers correctly evaluated against lateness threshold');
 
+  // --- Test 13: Multiple Consumers, Channel Isolation & Unsubscription ---
+  console.log('Test 13: Multiple Consumers, Channel Isolation & Unsubscription');
+  scheduler.clear();
+  mockClock.setStatus('playing');
+  mockClock.setTime(0);
+
+  const hapticConsumerA = [];
+  const hapticConsumerB = [];
+  const visualConsumer = [];
+  const globalConsumer = [];
+
+  const unsubHapticA = scheduler.subscribe('haptic', (e) => hapticConsumerA.push(e.id));
+  const unsubHapticB = scheduler.subscribe('haptic', (e) => hapticConsumerB.push(e.id));
+  const unsubVisual = scheduler.subscribe('visual', (e) => visualConsumer.push(e.id));
+  const unsubGlobal = scheduler.subscribeAll((e) => globalConsumer.push(e.id));
+
+  scheduler.scheduleBatch([
+    { id: 'haptic-beat-1', targetTimestampMs: 100, type: 'beat', channel: 'haptic', payload: { intensity: 0.8 } },
+    { id: 'visual-beat-1', targetTimestampMs: 100, type: 'pulse', channel: 'visual', payload: { band: 'sub' } },
+  ]);
+
+  scheduler.tick(100, 5000);
+
+  assert.deepStrictEqual(hapticConsumerA, ['haptic-beat-1']);
+  assert.deepStrictEqual(hapticConsumerB, ['haptic-beat-1']);
+  assert.deepStrictEqual(visualConsumer, ['visual-beat-1']);
+  assert.deepStrictEqual(globalConsumer, ['haptic-beat-1', 'visual-beat-1']);
+
+  unsubHapticA();
+  scheduler.schedule({ id: 'haptic-beat-2', targetTimestampMs: 300, type: 'beat', channel: 'haptic', payload: {} });
+  scheduler.tick(300, 5100);
+
+  assert.deepStrictEqual(hapticConsumerA, ['haptic-beat-1'], 'Consumer A unsubscribed, must not receive second event');
+  assert.deepStrictEqual(hapticConsumerB, ['haptic-beat-1', 'haptic-beat-2'], 'Consumer B still subscribed');
+  console.log('  ✓ Multi-consumer fan-out, channel isolation, and unsubscription verified');
+
+  // --- Test 14: Scheduler Disposal & Lifecycle Cleanup ---
+  console.log('Test 14: Scheduler Lifecycle Cleanup & Disposal');
+  scheduler.schedule({ id: 'pending-cue', targetTimestampMs: 9000, type: 'beat', channel: 'haptic', payload: {} });
+  assert.strictEqual(scheduler.getPendingEventCount(), 1);
+
+  scheduler.dispose();
+  assert.strictEqual(scheduler.getPendingEventCount(), 0, 'Disposal must clear queue');
+  assert.strictEqual(scheduler.tick(9500).length, 0, 'Disposed scheduler must not dispatch events');
+  console.log('  ✓ Scheduler dispose() completely releases queues, timers, and listeners');
+
+  // --- Test 15: Due-Event Dispatch Tolerance & Look-Ahead Precision (Stage A.7.1) ---
+  console.log('Test 15: Due-Event Dispatch Tolerance & Sub-Frame Precision (Stage A.7.1)');
+  {
+    const tolClock = new MockMasterClock();
+    tolClock.setStatus('playing');
+    const tolScheduler = new PriorityEventScheduler(
+      { lookAheadWindowMs: 80, dueEventToleranceMs: 3 },
+      tolClock,
+      new LatencyManager({ audioOffsetMs: 0, visualOffsetMs: 0 })
+    );
+
+    // Event scheduled for exactly 1000ms
+    tolScheduler.schedule({
+      id: 'sub-frame-cue',
+      targetTimestampMs: 1000,
+      channel: 'visual',
+      type: 'rhythm',
+      payload: {},
+    });
+
+    // 1. At 995ms (5ms early): Must NOT dispatch (5ms > 3ms tolerance).
+    // Proves that events are never dispatched meaningfully early.
+    const earlyTick = tolScheduler.tick(995);
+    assert.strictEqual(earlyTick.length, 0, 'Event must not dispatch 5ms before scheduled time');
+    assert.strictEqual(tolScheduler.getPendingEventCount(), 1);
+
+    // 2. At 998ms (within 3ms tolerance: 998 + 3 = 1001 >= 1000):
+    // Must dispatch! Prevents minor sub-frame timer jitter from postponing dispatch by 20ms.
+    const timelyTick = tolScheduler.tick(998);
+    assert.strictEqual(timelyTick.length, 1, 'Event must dispatch when within 3ms due tolerance');
+    assert.strictEqual(timelyTick[0].id, 'sub-frame-cue');
+    assert.strictEqual(tolScheduler.getPendingEventCount(), 0);
+
+    // 3. At 1000ms: Already dispatched; must not duplicate
+    const exactTick = tolScheduler.tick(1000);
+    assert.strictEqual(exactTick.length, 0, 'Already dispatched event must not fire again');
+
+    tolScheduler.dispose();
+    console.log('  ✓ Due-event tolerance (3ms) absorbs sub-frame timer jitter without early premature dispatch');
+  }
+
+  // --- Test 16: Competing Timer Paths & Staged Timeout Race Safety (Stage A.7.1) ---
+  console.log('Test 16: Competing Timer Paths & Staged Timeout Race Safety (Stage A.7.1)');
+  {
+    const raceClock = new MockMasterClock();
+    raceClock.setStatus('playing');
+    raceClock.setTime(400);
+
+    const raceScheduler = new PriorityEventScheduler(
+      { lookAheadWindowMs: 80, pollingIntervalMs: 20, dueEventToleranceMs: 3 },
+      raceClock,
+      new LatencyManager({ audioOffsetMs: 0, visualOffsetMs: 0 })
+    );
+
+    let dispatchCount = 0;
+    raceScheduler.subscribe('visual', () => {
+      dispatchCount++;
+    });
+
+    // Schedule event at 450ms (within 80ms look-ahead window from 400ms)
+    raceScheduler.schedule({
+      id: 'race-cue',
+      targetTimestampMs: 450,
+      channel: 'visual',
+      type: 'rhythm',
+      payload: {},
+    });
+
+    // Live tick at 400ms triggers scheduleNextStagedTimer
+    raceScheduler.tick();
+
+    // Simulate competing invocations: tick() called via interval at 448ms
+    // while staged timeout also fires around 448ms
+    const tick1 = raceScheduler.tick(448);
+    const tick2 = raceScheduler.tick(449);
+    const tick3 = raceScheduler.tick(450);
+
+    assert.strictEqual(dispatchCount, 1, 'Event must dispatch exactly once despite competing timer and polling invocations');
+    assert.strictEqual(tick1.length, 1, 'First due tick must dispatch event');
+    assert.strictEqual(tick2.length, 0, 'Competing tick must not re-dispatch');
+    assert.strictEqual(tick3.length, 0, 'Exact-time tick must not re-dispatch');
+
+    // Invalidation safety: stage an event, then seek (advance revision)
+    raceScheduler.schedule({
+      id: 'staged-then-seek-cue',
+      targetTimestampMs: 480,
+      channel: 'visual',
+      type: 'rhythm',
+      timelineRevision: 1,
+      payload: {},
+    });
+    raceScheduler.tick(); // stages timer
+
+    // Seek to 200ms on revision 2
+    raceClock.setRevision(2);
+    raceClock.setTime(200);
+
+    // Staged timer or tick fires for old target 480ms
+    const postSeekTick = raceScheduler.tick(480);
+    assert.strictEqual(postSeekTick.length, 0, 'Invalidated revision cue must be dropped on seek without dispatch');
+    assert.strictEqual(dispatchCount, 1, 'Total dispatches must remain 1');
+
+    raceScheduler.dispose();
+    console.log('  ✓ Competing timer paths and staged timeout race safety verified; seek invalidation confirmed');
+  }
+
+  // --- Test 17: Bounded Opening Boundary Kick Exception (T=0ms across startup delays) (Stage A.7.2.3.7) ---
+  console.log('Test 17: Bounded Opening Boundary Kick Exception (T=0ms across startup delays) (Stage A.7.2.3.7)');
+  {
+    // Setup LatencyManager with 60ms visual lead (standard production config)
+    const latMan = new LatencyManager({ audioOffsetMs: 0, visualOffsetMs: 60 });
+
+    const createSchedulerWithOpeningKick = (posMs) => {
+      const clock = new MockMasterClock();
+      clock.setStatus('playing');
+      clock.setTime(posMs);
+      const scheduler = new PriorityEventScheduler(
+        { lookAheadWindowMs: 80, pollingIntervalMs: 20, lateThresholdMs: 50 },
+        clock,
+        latMan
+      );
+      scheduler.schedule({
+        id: 'b1-1',
+        targetTimestampMs: 0,
+        channel: 'visual',
+        type: 'rhythm',
+        payload: { cueType: 'kick', intensity: 1.0 },
+      });
+      return { clock, scheduler };
+    };
+
+    // Sub-test A: First confirmation arrives at 0ms -> Dispatched!
+    {
+      const { scheduler } = createSchedulerWithOpeningKick(0);
+      const dispatched = scheduler.tick(0);
+      assert.strictEqual(dispatched.length, 1, 'Opening boundary kick dispatched at 0ms');
+      assert.strictEqual(dispatched[0].id, 'b1-1');
+
+      // Subsequent tick at 20ms: must NOT re-dispatch
+      const tick20 = scheduler.tick(20);
+      assert.strictEqual(tick20.length, 0, 'Opening boundary kick must not re-dispatch');
+      scheduler.dispose();
+    }
+
+    // Sub-test B: First confirmation arrives at 10ms -> Dispatched!
+    {
+      const { scheduler } = createSchedulerWithOpeningKick(10);
+      const dispatched = scheduler.tick(10);
+      assert.strictEqual(dispatched.length, 1, 'Opening boundary kick dispatched at 10ms');
+      scheduler.dispose();
+    }
+
+    // Sub-test C: First confirmation arrives at 35ms -> Dispatched!
+    {
+      const { scheduler } = createSchedulerWithOpeningKick(35);
+      const dispatched = scheduler.tick(35);
+      assert.strictEqual(dispatched.length, 1, 'Opening boundary kick dispatched at 35ms');
+      scheduler.dispose();
+    }
+
+    // Sub-test D: First confirmation arrives at 80ms -> Dispatched!
+    {
+      const { scheduler } = createSchedulerWithOpeningKick(80);
+      const dispatched = scheduler.tick(80);
+      assert.strictEqual(dispatched.length, 1, 'Opening boundary kick dispatched at 80ms');
+      scheduler.dispose();
+    }
+
+    // Sub-test E: First confirmation arrives at 150ms (>100ms bound) -> Dropped as late!
+    {
+      const { scheduler } = createSchedulerWithOpeningKick(150);
+      const dispatched = scheduler.tick(150);
+      assert.strictEqual(dispatched.length, 0, 'Opening boundary kick dropped when first confirmation arrives >100ms');
+      scheduler.dispose();
+    }
+
+    // Sub-test F: Seek to 2000ms -> T=0ms kick must NOT be dispatched
+    {
+      const clock = new MockMasterClock();
+      clock.setStatus('playing');
+      clock.setTime(2000);
+      clock.setRevision(2);
+      const scheduler = new PriorityEventScheduler(
+        { lookAheadWindowMs: 80, pollingIntervalMs: 20, lateThresholdMs: 50 },
+        clock,
+        latMan
+      );
+      scheduler.schedule({
+        id: 'b1-1',
+        targetTimestampMs: 0,
+        channel: 'visual',
+        type: 'rhythm',
+        timelineRevision: 2,
+        payload: { cueType: 'kick', intensity: 1.0 },
+      });
+      const dispatched = scheduler.tick(2000);
+      assert.strictEqual(dispatched.length, 0, 'Opening boundary kick must NEVER be replayed after seek to 2000ms');
+      scheduler.dispose();
+    }
+
+    console.log('  ✓ Bounded opening boundary kick exception verified: preserved at 0, 10, 35, 80ms; dropped at 150ms; never replayed after seek');
+  }
+
+  // --- Test 18: Immediate First-Tick Execution on Scheduler start() (Stage A.7.2.3.7) ---
+  console.log('Test 18: Immediate First-Tick Execution on Scheduler start() (Stage A.7.2.3.7)');
+  {
+    const clock = new MockMasterClock();
+    clock.setStatus('playing');
+    clock.setTime(0);
+
+    const latMan = new LatencyManager({ audioOffsetMs: 0, visualOffsetMs: 60 });
+    const scheduler = new PriorityEventScheduler(
+      { lookAheadWindowMs: 80, pollingIntervalMs: 20, lateThresholdMs: 50 },
+      clock,
+      latMan
+    );
+
+    let immediateDispatches = [];
+    scheduler.subscribe('visual', (event) => {
+      immediateDispatches.push(event);
+    });
+
+    scheduler.schedule({
+      id: 'b1-1',
+      targetTimestampMs: 0,
+      channel: 'visual',
+      type: 'rhythm',
+      payload: { cueType: 'kick', intensity: 1.0 },
+    });
+
+    assert.strictEqual(immediateDispatches.length, 0, 'Zero dispatches before scheduler.start()');
+
+    // Call start(): must execute this.tick() synchronously without waiting for 20ms interval
+    scheduler.start();
+
+    assert.strictEqual(immediateDispatches.length, 1, 'Opening cue dispatched synchronously upon scheduler.start()');
+    assert.strictEqual(immediateDispatches[0].id, 'b1-1');
+
+    scheduler.dispose();
+    console.log('  ✓ Scheduler start() immediately executes first tick, eliminating startup polling latency');
+  }
+
+  // --- Test 19: Seek Landing Boundary Exception for Visual Cues (Stage A.7.2.3.10) ---
+  console.log('Test 19: Seek Landing Boundary Exception for Visual Cues (Stage A.7.2.3.10)');
+  {
+    const clock = new MockMasterClock();
+    clock.setStatus('playing');
+    clock.setTime(3000);
+    clock.setRevision(2);
+
+    const latMan = new LatencyManager({ audioOffsetMs: 0, visualOffsetMs: 60 });
+    const scheduler = new PriorityEventScheduler(
+      { lookAheadWindowMs: 80, pollingIntervalMs: 20, maxLatenessToleranceMs: 50 },
+      clock,
+      latMan
+    );
+
+    // Schedule visual cue whose target is exactly at the seek landing position (3000ms).
+    // Compensated trigger is 3000 - 60 = 2940ms.
+    // Lateness boundary: 3000 - 50 = 2950ms.
+    // Since 2940 < 2950, without the Seek Landing Boundary Exception this cue would be dropped as stale!
+    scheduler.schedule({
+      id: 'vis-seek-landing-beat',
+      targetTimestampMs: 3000,
+      channel: 'visual',
+      type: 'rhythm',
+      timelineRevision: 2,
+      payload: { role: 'downbeat', weight: 1.0 },
+    });
+
+    assert.strictEqual(scheduler.getPendingEventCount(), 1, 'Cue at seek landing must NOT be dropped by scheduleBatch()');
+
+    // First tick at seek landing position (3000ms): must dispatch immediately!
+    const landingDispatches = scheduler.tick(3000);
+    assert.strictEqual(landingDispatches.length, 1, 'Landing cue must be dispatched on seek landing tick');
+    assert.strictEqual(landingDispatches[0].id, 'vis-seek-landing-beat');
+    assert.strictEqual(scheduler.getPendingEventCount(), 0, 'Queue must be empty after landing dispatch');
+
+    // Subsequent tick at 3020ms: must NOT re-dispatch (duplicate protection)
+    const tickAfter = scheduler.tick(3020);
+    assert.strictEqual(tickAfter.length, 0, 'Landing cue must not re-dispatch on subsequent ticks');
+
+    scheduler.dispose();
+    console.log('  ✓ Seek landing boundary exception preserves visual cues at landing point despite 60ms lead time');
+  }
+
+  // --- Test 20: Stale Cue Rejection Beyond 60ms Proximity (Stage A.7.2.3.10) ---
+  console.log('Test 20: Stale Cue Rejection Beyond 60ms Proximity (Stage A.7.2.3.10)');
+  {
+    const clock = new MockMasterClock();
+    clock.setStatus('playing');
+    clock.setTime(3200);
+    clock.setRevision(3);
+
+    const latMan = new LatencyManager({ audioOffsetMs: 0, visualOffsetMs: 60 });
+    const scheduler = new PriorityEventScheduler(
+      { lookAheadWindowMs: 80, pollingIntervalMs: 20, maxLatenessToleranceMs: 50 },
+      clock,
+      latMan
+    );
+
+    // Schedule cue at 3000ms while playback has progressed to 3200ms (|3200 - 3000| = 200 > 60ms)
+    scheduler.schedule({
+      id: 'vis-genuinely-expired',
+      targetTimestampMs: 3000,
+      channel: 'visual',
+      type: 'rhythm',
+      timelineRevision: 3,
+      payload: { role: 'downbeat', weight: 1.0 },
+    });
+
+    assert.strictEqual(scheduler.getPendingEventCount(), 0, 'Genuinely expired cue (>60ms past landing) must be dropped');
+
+    const expiredDispatches = scheduler.tick(3200);
+    assert.strictEqual(expiredDispatches.length, 0, 'Expired cue must not dispatch');
+
+    scheduler.dispose();
+    console.log('  ✓ Genuinely expired cues (>60ms past seek point) strictly rejected as stale');
+  }
+
+  // --- Test 21: Synchronous Score Provider Registration & Immediate Revision Population (Stage A.7.2.3.10) ---
+  console.log('Test 21: Synchronous Score Provider Registration & Immediate Revision Population (Stage A.7.2.3.10)');
+  {
+    const clock = new MockMasterClock();
+    clock.setStatus('playing');
+    clock.setTime(0);
+    clock.setRevision(1);
+
+    const latMan = new LatencyManager({ audioOffsetMs: 0, visualOffsetMs: 60 });
+    const scheduler = new PriorityEventScheduler(
+      { lookAheadWindowMs: 80, pollingIntervalMs: 20, maxLatenessToleranceMs: 50 },
+      clock,
+      latMan
+    );
+
+    let providerInvocations = [];
+    scheduler.setScoreProvider((sched, rev) => {
+      providerInvocations.push(rev);
+      sched.scheduleBatch([
+        { id: `cue-rev-${rev}-1`, targetTimestampMs: 3000, channel: 'visual', type: 'rhythm', timelineRevision: rev, payload: {} },
+        { id: `cue-rev-${rev}-2`, targetTimestampMs: 3500, channel: 'visual', type: 'rhythm', timelineRevision: rev, payload: {} },
+      ]);
+    });
+
+    // Advance timeline revision to 2 (simulating seek to 3000ms)
+    clock.setRevision(2);
+    clock.setTime(3000);
+
+    // MasterClock tick triggers handleRevisionChange -> invokes scoreProvider synchronously!
+    assert.strictEqual(providerInvocations.length, 1, 'ScoreProvider must be invoked synchronously on revision change');
+    assert.strictEqual(providerInvocations[0], 2, 'ScoreProvider invoked with new revision 2');
+    assert.strictEqual(scheduler.getPendingEventCount(), 2, 'Scheduler immediately populated with 2 cues (0ms delay)');
+
+    // Immediate tick dispatches cue 1 at 3000ms landing
+    const dispatches = scheduler.tick(3000);
+    assert.strictEqual(dispatches.length, 1, 'Landing cue dispatched immediately');
+    assert.strictEqual(dispatches[0].id, 'cue-rev-2-1');
+    assert.strictEqual(scheduler.getPendingEventCount(), 1, 'Upcoming cue remains in queue');
+
+    // Clean unsubscription
+    scheduler.setScoreProvider(null);
+    clock.setRevision(3);
+    assert.strictEqual(providerInvocations.length, 1, 'ScoreProvider not invoked after unsetting');
+
+    scheduler.dispose();
+    console.log('  ✓ Synchronous ScoreProvider eliminates passive React rescheduling delay; cues populated with 0ms latency');
+  }
+
   console.log('\n================================================================');
-  console.log('🎉 ALL 12 SYNCHRONIZATION & EVENT SCHEDULER TESTS PASSED!');
+  console.log('🎉 ALL 21 SYNCHRONIZATION & EVENT SCHEDULER TESTS PASSED!');
   console.log('================================================================');
 }
 

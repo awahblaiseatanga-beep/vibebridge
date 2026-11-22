@@ -34,67 +34,49 @@ export interface CanonicalRhythmCue {
 }
 
 /**
- * 47 canonical rhythm cues across 6 measures of 4/4 at 120 BPM.
- * 120 BPM = 500ms per quarter-note beat; 250ms per eighth-note subdivision.
+ * 24 canonical rhythm cues across 6 measures of 4/4 at 120 BPM.
+ * 120 BPM = 500ms per quarter-note beat.
+ *
+ * Audio Truth Alignment (Stage A.5):
+ * Aligned strictly to the verified audible transient attacks in assets/music/vibebridge_demo.wav.
+ * Removed 23 ghost subdivision/filler cues that lacked audible percussion counterparts,
+ * restoring 1:1 perceptual coherence between sound, tactile haptics, and visual rhythm.
  */
 export const CANONICAL_DEMO_RHYTHM_SCORE: CanonicalRhythmCue[] = [
-  // --- Bar 1 (0ms - 2000ms): Groove Introduction ---
+  // --- Bar 1 (0ms - 2000ms): 4/4 Groove Introduction ---
   { id: 'b1-1', targetTimestampMs: 0, bar: 1, beat: 1.0, role: 'downbeat', intensity: 'strong', weight: 1.0, label: 'Kick 1', hapticPattern: 'heavy' },
-  { id: 'b1-1.5', targetTimestampMs: 250, bar: 1, beat: 1.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
   { id: 'b1-2', targetTimestampMs: 500, bar: 1, beat: 2.0, role: 'backbeat', intensity: 'medium', weight: 0.85, label: 'Snare 1', hapticPattern: 'medium' },
-  { id: 'b1-2.5', targetTimestampMs: 750, bar: 1, beat: 2.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
   { id: 'b1-3', targetTimestampMs: 1000, bar: 1, beat: 3.0, role: 'downbeat', intensity: 'strong', weight: 0.95, label: 'Kick 2', hapticPattern: 'heavy' },
-  { id: 'b1-3.5', targetTimestampMs: 1250, bar: 1, beat: 3.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
   { id: 'b1-4', targetTimestampMs: 1500, bar: 1, beat: 4.0, role: 'backbeat', intensity: 'medium', weight: 0.85, label: 'Snare 2', hapticPattern: 'medium' },
-  { id: 'b1-4.5', targetTimestampMs: 1750, bar: 1, beat: 4.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
 
   // --- Bar 2 (2000ms - 4000ms): Established Rhythm ---
   { id: 'b2-1', targetTimestampMs: 2000, bar: 2, beat: 1.0, role: 'downbeat', intensity: 'strong', weight: 1.0, label: 'Kick 1', hapticPattern: 'heavy' },
-  { id: 'b2-1.5', targetTimestampMs: 2250, bar: 2, beat: 1.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
   { id: 'b2-2', targetTimestampMs: 2500, bar: 2, beat: 2.0, role: 'backbeat', intensity: 'medium', weight: 0.85, label: 'Snare 1', hapticPattern: 'medium' },
-  { id: 'b2-2.5', targetTimestampMs: 2750, bar: 2, beat: 2.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
   { id: 'b2-3', targetTimestampMs: 3000, bar: 2, beat: 3.0, role: 'downbeat', intensity: 'strong', weight: 0.95, label: 'Kick 2', hapticPattern: 'heavy' },
-  { id: 'b2-3.5', targetTimestampMs: 3250, bar: 2, beat: 3.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
   { id: 'b2-4', targetTimestampMs: 3500, bar: 2, beat: 4.0, role: 'backbeat', intensity: 'medium', weight: 0.85, label: 'Snare 2', hapticPattern: 'medium' },
-  { id: 'b2-4.5', targetTimestampMs: 3750, bar: 2, beat: 4.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
 
   // --- Bar 3 (4000ms - 6000ms): Steady Energy ---
   { id: 'b3-1', targetTimestampMs: 4000, bar: 3, beat: 1.0, role: 'downbeat', intensity: 'strong', weight: 1.0, label: 'Kick 1', hapticPattern: 'heavy' },
-  { id: 'b3-1.5', targetTimestampMs: 4250, bar: 3, beat: 1.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
   { id: 'b3-2', targetTimestampMs: 4500, bar: 3, beat: 2.0, role: 'backbeat', intensity: 'medium', weight: 0.85, label: 'Snare 1', hapticPattern: 'medium' },
-  { id: 'b3-2.5', targetTimestampMs: 4750, bar: 3, beat: 2.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
   { id: 'b3-3', targetTimestampMs: 5000, bar: 3, beat: 3.0, role: 'downbeat', intensity: 'strong', weight: 0.95, label: 'Kick 2', hapticPattern: 'heavy' },
-  { id: 'b3-3.5', targetTimestampMs: 5250, bar: 3, beat: 3.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
   { id: 'b3-4', targetTimestampMs: 5500, bar: 3, beat: 4.0, role: 'backbeat', intensity: 'medium', weight: 0.85, label: 'Snare 2', hapticPattern: 'medium' },
-  { id: 'b3-4.5', targetTimestampMs: 5750, bar: 3, beat: 4.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
 
   // --- Bar 4 (6000ms - 8000ms): Driving Rhythm ---
   { id: 'b4-1', targetTimestampMs: 6000, bar: 4, beat: 1.0, role: 'downbeat', intensity: 'strong', weight: 1.0, label: 'Kick 1', hapticPattern: 'heavy' },
-  { id: 'b4-1.5', targetTimestampMs: 6250, bar: 4, beat: 1.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
   { id: 'b4-2', targetTimestampMs: 6500, bar: 4, beat: 2.0, role: 'backbeat', intensity: 'medium', weight: 0.85, label: 'Snare 1', hapticPattern: 'medium' },
-  { id: 'b4-2.5', targetTimestampMs: 6750, bar: 4, beat: 2.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
   { id: 'b4-3', targetTimestampMs: 7000, bar: 4, beat: 3.0, role: 'downbeat', intensity: 'strong', weight: 0.95, label: 'Kick 2', hapticPattern: 'heavy' },
-  { id: 'b4-3.5', targetTimestampMs: 7250, bar: 4, beat: 3.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
   { id: 'b4-4', targetTimestampMs: 7500, bar: 4, beat: 4.0, role: 'backbeat', intensity: 'medium', weight: 0.85, label: 'Snare 2', hapticPattern: 'medium' },
-  { id: 'b4-4.5', targetTimestampMs: 7750, bar: 4, beat: 4.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
 
   // --- Bar 5 (8000ms - 10000ms): Energy Buildup ---
   { id: 'b5-1', targetTimestampMs: 8000, bar: 5, beat: 1.0, role: 'downbeat', intensity: 'strong', weight: 1.0, label: 'Kick 1', hapticPattern: 'heavy' },
-  { id: 'b5-1.5', targetTimestampMs: 8250, bar: 5, beat: 1.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
   { id: 'b5-2', targetTimestampMs: 8500, bar: 5, beat: 2.0, role: 'backbeat', intensity: 'medium', weight: 0.85, label: 'Snare 1', hapticPattern: 'medium' },
-  { id: 'b5-2.5', targetTimestampMs: 8750, bar: 5, beat: 2.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
   { id: 'b5-3', targetTimestampMs: 9000, bar: 5, beat: 3.0, role: 'downbeat', intensity: 'strong', weight: 0.95, label: 'Kick 2', hapticPattern: 'heavy' },
-  { id: 'b5-3.5', targetTimestampMs: 9250, bar: 5, beat: 3.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
   { id: 'b5-4', targetTimestampMs: 9500, bar: 5, beat: 4.0, role: 'backbeat', intensity: 'medium', weight: 0.85, label: 'Snare 2', hapticPattern: 'medium' },
-  { id: 'b5-4.5', targetTimestampMs: 9750, bar: 5, beat: 4.5, role: 'subdivision', intensity: 'soft', weight: 0.5, label: 'Hi-hat', hapticPattern: 'light' },
 
-  // --- Bar 6 (10000ms - 12000ms): Climax Fill & Final Resolution ---
+  // --- Bar 6 (10000ms - 12000ms): Climax Cadence & Final Resolution ---
   { id: 'b6-1', targetTimestampMs: 10000, bar: 6, beat: 1.0, role: 'downbeat', intensity: 'strong', weight: 1.0, label: 'Kick 1', hapticPattern: 'heavy' },
-  { id: 'b6-1.5', targetTimestampMs: 10250, bar: 6, beat: 1.5, role: 'subdivision', intensity: 'soft', weight: 0.6, label: 'Hi-hat', hapticPattern: 'light' },
   { id: 'b6-2', targetTimestampMs: 10500, bar: 6, beat: 2.0, role: 'backbeat', intensity: 'medium', weight: 0.9, label: 'Snare 1', hapticPattern: 'medium' },
-  { id: 'b6-2.5', targetTimestampMs: 10750, bar: 6, beat: 2.5, role: 'backbeat', intensity: 'medium', weight: 0.9, label: 'Snare Roll', hapticPattern: 'medium' },
   { id: 'b6-3', targetTimestampMs: 11000, bar: 6, beat: 3.0, role: 'accent', intensity: 'strong', weight: 1.0, label: 'Accent 1', hapticPattern: 'rigid' },
-  { id: 'b6-3.5', targetTimestampMs: 11250, bar: 6, beat: 3.5, role: 'accent', intensity: 'strong', weight: 1.0, label: 'Accent 2', hapticPattern: 'rigid' },
   { id: 'b6-4', targetTimestampMs: 11500, bar: 6, beat: 4.0, role: 'resolution', intensity: 'strong', weight: 1.0, label: 'Final Resolution', hapticPattern: 'pulse' },
 ];
 

@@ -448,4 +448,530 @@ Phase 2, Milestone 5 is **COMPLETED**. Confirmed commit: `1f7e27d3a77f58167525c5
 ---
 
 ### Status
-Phase 2, Milestone 6 is **COMPLETED**. Proposed commit ready for user review and authorization.
+Phase 2, Milestone 6 is **COMPLETED**. Confirmed commit: `2c8e3fbcb44d613631b0e14d5b4dd6f273d2f327`.
+
+---
+
+### Stage 1: Synchronization & Playback Lifecycle Corrections
+**Date:** 2026-11-20
+
+#### 1. Look-Ahead Window Dispatch Semantics Correction (`src/engines/event-scheduler/PriorityEventScheduler.ts`)
+- **Problem:** In physical testing on Android 15 (Redmi A5), haptics fired noticeably earlier than musical beats or at irregular intervals. Investigation revealed that `PriorityEventScheduler.tick()` evaluated event eligibility using `event.scheduledTimestampMs <= effectiveHorizonMs`, where `effectiveHorizonMs = currentPosition + lookAheadWindowMs` (80ms). Events were dispatched 60–80ms prematurely (plus 25ms haptic lead time = 85–105ms ahead of acoustic transients).
+- **Correction:**
+  - Shifted dispatch criteria to strict due-time threshold: `event.scheduledTimestampMs <= currentPosition`.
+  - Maintained staleness drop tolerance: cues older than 50ms (`minTimelyTimestamp = currentPosition - 50`) are discarded to avoid delayed bursts after thread stalls.
+  - Introduced a **Single Managed Staging Micro-Timer** (`stagedTimerHandle`):
+    - When upcoming cues fall within the look-ahead window (`currentPosition < scheduledTimestampMs <= currentPosition + lookAheadWindowMs`), the scheduler calculates the millisecond delta to the earliest upcoming cue ($\Delta t = \text{earliestEvent.scheduledTimestampMs} - \text{currentPosition}$) and sets a single micro-timer.
+    - When the timer executes, it invokes `tick()`, dispatching the cue right on time and scheduling the next one.
+    - Eliminates 0–20ms polling discretization jitter without spawning uncontrolled timers or leaking handles.
+    - Micro-timer handle is strictly cleared on revision change, pause, stop, buffering, queue clearing, and disposal.
+
+#### 2. Replay (Stop $\to$ Play) Cue Rescheduling Correction (`src/engines/audio/ExpoAudioEngine.ts` & `NowPlayingCard.tsx`)
+- **Problem:** Stopping and replaying a track resulted in weak or missing vibrations. Investigation revealed that `ExpoAudioEngine.stop()` did not advance `timelineRevision`. When stopped, `eventScheduler.clear()` wiped the queue and cleared dispatched IDs, but `NowPlayingCard`'s cue-scheduling effect (`useEffect([timelineRevision])`) was never triggered. Replay from stopped position left the scheduler queue empty.
+- **Correction:**
+  - In `ExpoAudioEngine.stop()`, increment `this.clock.timelineRevision++` (guarded against redundant increments if already stopped at position 0).
+  - In `NowPlayingCard.tsx`, the `timelineRevision` change triggers `hapticEngine.reset()` and `scheduleDemoTrackSensoryCues(eventScheduler, timelineRevision)`.
+  - In `NowPlayingCard.tsx`'s `handlePlayPause()`, added explicit check: if stopped at end of track (`isStopped && durationMs > 0 && positionMs >= durationMs`), explicitly seek to 0 before resuming.
+
+#### 3. Pause $\to$ Resume Lifecycle Continuity
+- **Behavior Verified:**
+  - On pause: clock estimation freezes, active micro-timer is cancelled, polling interval is stopped, but future scheduled events remain in the queue.
+  - On resume: polling restarts, active micro-timer is staged for the next due cue, and playback continues seamlessly without duplicate triggers or skipped beats.
+
+#### 4. Automated Testing & Verification
+- Comprehensive rewrite of `scripts/test-synchronization.js` with 14 deterministic tests:
+  - Test 1: Latency compensation calculations for all channels.
+  - Test 2: Chronological event ordering & identical timestamp FIFO stability.
+  - Test 3: Duplicate prevention across dispatch ticks.
+  - Test 4: Event cancellation.
+  - Test 5: Look-ahead window preparation without premature dispatch & exact due-time firing.
+  - Test 6: Timeline revision invalidation on seek.
+  - Test 7: Paused & buffering clock behavior (freeze & safe resumption).
+  - Test 8: Pause $\to$ Resume lifecycle continuation without replaying old cues.
+  - Test 9: Stop invalidation & revision advance.
+  - Test 10: Stop $\to$ Play replay complete rescheduling.
+  - Test 11: Late-event handling policy & staleness dropping.
+  - Test 12: Clamped latency lead time staleness.
+  - Test 13: Multiple consumers, channel isolation & unsubscription.
+  - Test 14: Scheduler lifecycle cleanup & disposal.
+  - Status: **ALL 14 TESTS PASSED**.
+- Full test suite verification (`npm test`):
+  - Audio Engine: **13/13 PASSED**
+  - Synchronization & Event Scheduler: **14/14 PASSED** (up from 12)
+  - Haptic Engine: **10/10 PASSED**
+  - Visual Rhythm Engine: **10/10 PASSED**
+  - Synchronized Lyrics Engine: **11/11 PASSED**
+  - Total: **58/58 UNIT TESTS PASSED** (all 5 test suites).
+- TypeScript strict typecheck (`npm run typecheck`): **PASSED (0 errors)**.
+- Android bundling verification (`npx expo export --platform android`): **PASSED (1,186 modules bundled in 4.7s)**.
+
+---
+
+### Status
+Stage 1: Synchronization & Playback Lifecycle Corrections are **COMPLETE** and verified. Proposed changes ready for user review and commit authorization.
+
+---
+
+### Stage A: SEE Direct Visual Event Animation & Responsiveness
+**Date:** 2026-11-20
+
+#### 1. Decoupled Direct Animation Dispatch (`src/engines/visual/` & `src/features/visualizer/`)
+- **Problem:** Visual animations were previously initiated solely through React component state updates (`setVisualState`) and an associated `useEffect([state.totalEventsReceived])`. On budget Android hardware (Redmi A5 / Cortex-A53 cores), the React Native reconciliation and commit pass introduced **40ms to 80ms of rendering latency**, causing animations to fire noticeably after the audible beat. Additionally, underdamped 350ms springs exceeded the 250ms eighth-note event interval, causing successive cues to cancel decaying animations and leave the visual surface permanently elevated.
+- **Architectural Solution:**
+  - Extended `IVisualRhythmEngine` and `VisualRhythmEngine` with synchronous direct cue notification: `onVisualCue(listener: VisualCueListener): () => void`.
+  - Dispatches `VisualCueAnimationPayload` synchronously to imperative listeners upon receiving a scheduled visual event, completely bypassing the React render loop.
+  - Exposed `onVisualCue` through the `useVisualizer` hook.
+  - In `VisualRhythmSurface.tsx`, bound `onVisualCue` directly to React Native `Animated` values (`scaleAnim`, `auraScaleAnim`, `opacityAnim`).
+  - Active animations are tracked via `activeAnimationRef.current` and cleanly stopped before initiating the next cue, preventing uncontrolled queues or mid-flight drift.
+  - Low-frequency informational UI state (4/4 Beat HUD, measure progression `BAR 1/6`, transport status, and glyph text) continues to be handled via React state at natural, low-frequency intervals without blocking the kinetic animation thread.
+
+#### 2. Optimized Animation Envelopes with Clean Baseline Return
+- Replaced underdamped springs with critically tuned, fast-attack, smooth-decay curves using `Easing.out(Easing.quad)` to ensure all animations settle fully back to `scale: 1.0` and baseline opacity `0.35` before the next event:
+  - **Downbeat / Accent (`role: 'downbeat' | 'accent'`):** Attack 30ms, Decay 130ms, Total: **160ms** (settles 90ms before next 250ms cue).
+  - **Backbeat (`role: 'backbeat'`):** Attack 25ms, Decay 110ms, Total: **135ms** (settles 115ms before next 250ms cue).
+  - **Subdivision (`role: 'subdivision'`):** Attack 20ms, Decay 70ms, Total: **90ms** (settles 160ms before next 250ms cue).
+  - **Resolution (`role: 'resolution'`):** Attack 40ms, Decay 260ms, Total: **300ms** (fits cleanly within the 500ms outro window).
+  - **Reduced Motion Mode:** Kinetic scale is locked strictly at `1.0` (zero scaling/bouncing); high-contrast opacity pulse (Attack 20–25ms, Decay 110–135ms) preserves rhythm clarity.
+  - **Resting / Inactive Transport:** Transport pause, stop, buffering, or musical rest triggers a gentle 150ms settle animation to resting baseline.
+
+#### 3. Synchronization & Lifecycle Guarantees
+- Strictly driven by `PriorityEventScheduler`'s `'visual'` channel and `MasterClock`; zero independent JavaScript timers or clocks.
+- Outdated cues from earlier timeline revisions (e.g., following seeks, track changes, or stop) are dropped upfront via `event.timelineRevision !== this.currentRevision`.
+- Unmounting `VisualRhythmSurface` cancels running animations and releases listeners. Disabling visuals suspends scheduler subscription.
+
+#### 4. Automated Verification & Metrics
+- Expanded `scripts/test-visual-engine.js` from 10 to 13 tests:
+  - Test 11: Direct visual cue animation envelopes (`onVisualCue`) for downbeat, accent, backbeat, subdivision, and resolution.
+  - Test 12: High-frequency consecutive cues (8 cues at 250ms spacing) ensuring no accumulation and verified listener unsubscription.
+  - Test 13: Direct cue listener reduced-motion handling and timeline revision safety.
+  - Status: **ALL 13 TESTS PASSED**.
+- Entire automated test suite (`npm test`):
+  - Audio Engine: **13/13 PASSED**
+  - Synchronization & Event Scheduler: **14/14 PASSED**
+  - Haptic Engine: **10/10 PASSED**
+  - Visual Rhythm Engine: **13/13 PASSED** (up from 10)
+  - Synchronized Lyrics Engine: **11/11 PASSED**
+  - Total: **61/61 UNIT TESTS PASSED**.
+- TypeScript strict typecheck (`npm run typecheck`): **PASSED (0 errors)**.
+- Android bundling verification (`npx expo export --platform android`): **PASSED (1,186 modules bundled in 3.9s)**.
+
+---
+
+### Status
+Stage A: Direct Visual Event Animation & Responsiveness is **COMPLETE** and verified. Proposed changes ready for user review.
+
+---
+
+### Stage A.3: Controlled Visual Latency Lead Calibration
+**Date:** 2026-11-20
+
+#### 1. Context and Problem
+- Physical testing on Redmi A5 (Android 15, API 35) confirmed that Stage A direct imperative animation dispatch reduced React render overhead.
+- However, visual rhythm feedback remained noticeably behind the audible beat.
+- Technical analysis identified the root latency budget:
+  - Default provisional visual compensation was only **16ms** (1 display frame).
+  - Android display presentation pipeline introduces Choreographer VSYNC alignment (0–16.7ms, avg ~8.3ms), SurfaceFlinger triple-buffering (16.7–33.3ms), and IPS LCD GTG pixel transition latency (10–15ms).
+  - Kinetic attack time to perceptual peak (P-center) accounts for another 20–30ms.
+  - Total physical perceptual lag spans **55ms to 75ms**, leaving 16ms under-compensated by ~40ms to 60ms.
+
+#### 2. Architectural Solution
+- **Strict Baseline Preservation:** Default `visualOffsetMs` remains strictly `16ms` in `DEFAULT_LATENCY_OFFSETS`.
+- **Dynamic Offset Calibration:**
+  - Extended `LatencyManager` with `onOffsetsChange` subscription.
+  - Implemented `setVisualCalibrationOffset(16 | 40 | 60)` in `VisualRhythmEngine` and exposed via `useVisualizer`.
+  - Added dynamic pending event recalculation in `PriorityEventScheduler.recomputePendingTimestamps()`.
+  - Dynamically recalculates `event.scheduledTimestampMs` for un-dispatched cues in the priority queue and re-sorts without seeking, without restarting audio, without advancing `timelineRevision`, and without duplicating previously dispatched cues.
+- **Diagnostic Software Telemetry:**
+  - Added `VisualSyncTelemetryRecord` capturing: event ID, musical role, selected offset lead (16/40/60ms), target timestamp, scheduled timestamp, scheduler dispatch timestamp, `onVisualCue` arrival timestamp, animation initiation timestamp, dispatch latency, setup latency, and timeline revision.
+  - Telemetry ring buffer capped at 20 entries in `VisualRhythmEngine` with subscription support.
+- **Developer Calibration UI:**
+  - Integrated unobtrusive calibration pills (`[16ms (Default)]`, `[40ms]`, `[60ms]`) and live telemetry readout in `VisualRhythmSurface.tsx`.
+  - Seamlessly switchable during live playback on physical devices.
+
+#### 3. Automated Verification & Metrics
+- Expanded `scripts/test-visual-engine.js` from 13 to 15 tests:
+  - Test 14: Dynamic visual calibration switching (16ms, 40ms, 60ms) and pending cue recomputation without timeline revision change or audio restart.
+  - Test 15: Visual sync telemetry recording, animation initiation ingestion, and buffer limit.
+  - Status: **ALL 15 TESTS PASSED**.
+- Entire automated test suite (`npm test`):
+  - Audio Engine: **13/13 PASSED**
+  - Synchronization & Event Scheduler: **14/14 PASSED**
+  - Haptic Engine: **10/10 PASSED**
+  - Visual Rhythm Engine: **15/15 PASSED** (up from 13)
+  - Synchronized Lyrics Engine: **11/11 PASSED**
+  - Total: **63/63 UNIT TESTS PASSED** (all 5 test suites).
+- TypeScript strict typecheck (`npm run typecheck`): **PASSED (0 errors)**.
+- Android bundling verification (`npx expo export --platform android`): **PASSED (1,186 modules bundled in 4.3s)**.
+
+---
+
+### Status
+Stage A.3: Controlled Visual Latency Lead Calibration is **COMPLETE** and verified. Ready for physical calibration testing on the Redmi A5 device.
+
+---
+
+### Stage A.5: Canonical Rhythm Score Correction — Audio Truth Alignment
+**Date:** 2026-11-22
+
+#### 1. Context and Problem
+- Stage A.4 engineering audit revealed a critical discrepancy between the canonical rhythm score and the actual audio file `assets/music/vibebridge_demo.wav`.
+- The score originally contained **47 cues**, but independent PCM analysis proved that the audio contains only **24 audible percussion/cadence transients**.
+- Exactly **23 cues (49%) were ghost cues** scheduled on eighth-note off-beats ($250\text{ms}, 750\text{ms}, 1250\text{ms}\dots$), plus a false "snare roll" ($10750\text{ms}$) and false "accent 2" ($11250\text{ms}$) in Bar 6 where the audio has zero transient attack.
+- These ghost cues caused the visual and haptic engines to fire during dead silence, creating the perceptual illusion of being "wildly ahead," while simultaneously interrupting real beat animations mid-flight and causing jerky velocity resets.
+
+#### 2. Architectural Solution
+- **Canonical Score Correction (`src/features/rhythm/demoTrackScore.ts`):**
+  - Pruned all 23 ghost cues lacking physical audio counterparts.
+  - Retained all **24 genuine audible transients**:
+    - Bars 1–5: 4 quarter-note beats per bar at 120 BPM (Beat 1: Kick 1, Beat 2: Snare 1, Beat 3: Kick 2, Beat 4: Snare 2).
+    - Bar 6: Beat 1 (Kick 1), Beat 2 (Snare 1), Beat 3 (Accent 1), Beat 4 (Final Resolution).
+  - Preserved accurate timestamps ($0\text{ms}, 500\text{ms}, 1000\text{ms}\dots 11500\text{ms}$), bar/beat positions, and musical roles.
+  - Visual (`getDemoTrackVisualCues`) and haptic (`getDemoTrackHapticCues`) engines continue to consume the single canonical score in lockstep.
+- **Immediate Perceptual & Performance Improvements:**
+  - Every visual pulse and phone vibration corresponds 1:1 to an audible transient.
+  - Event interval expanded from $250\text{ms}$ to $500\text{ms}$. With a $160\text{ms}$ animation envelope, the visualizer settles completely to baseline $340\text{ms}$ before the next beat, completely eliminating mid-decay preemption and velocity discontinuities.
+  - Secondary 4/4 Beat Indicator HUD now tracks clean quarter beats (Beats 1, 2, 3, 4) without ghost re-renders.
+
+#### 3. Automated Verification & Metrics
+- Updated `scripts/test-visual-engine.js` (Test 10):
+  - Verified all 24 retained cues match verified audible transient timestamps.
+  - Verified all 23 removed ghost cue IDs do not exist in the canonical score and are never scheduled on visual or haptic channels.
+  - Verified 1:1 synchronization between visual and haptic cue schedules (24 cues each, 48 total).
+  - Verified beat and bar numbering integrity.
+  - Verified playback sequence and pause/resume/seek/stop/replay lifecycles.
+- Entire automated test suite (`npm test`):
+  - Audio Engine: **13/13 PASSED**
+  - Synchronization & Event Scheduler: **14/14 PASSED**
+  - Haptic Engine: **10/10 PASSED**
+  - Visual Rhythm Engine: **15/15 PASSED**
+  - Synchronized Lyrics Engine: **11/11 PASSED**
+  - Total: **63/63 UNIT TESTS PASSED** across all 5 engines.
+- TypeScript strict typecheck (`npm run typecheck`): **PASSED (0 errors)**.
+- Android bundling verification (`npx expo export --platform android`): **PASSED (1,186 modules bundled in 3.1s)**.
+
+---
+
+### Status
+Stage A.5: Canonical Rhythm Score Correction — Audio Truth Alignment is **COMPLETE** and verified. Ready for user review.
+
+---
+
+### Stage A.6: React Rendering Decoupling and Visual Performance Optimization
+**Date:** 2026-11-22
+
+#### 1. Context and Problem
+- Physical testing on a Redmi A5 (Android 15) exposed jerky, unstable visual rhythm movement despite Stage A direct animation dispatch and Stage A.5 score truth alignment.
+- Audit identified the rendering bottleneck:
+  - During playback, `visualRhythmEngine.handleVisualEvent()` emitted engine state and telemetry on every cue.
+  - In `useVisualizer`, `setVisualState` and `setLatestTelemetry` triggered 2–3 full React component re-renders per visual cue ($4\text{ to }6\text{ Hz}$).
+  - In `VisualRhythmSurface.tsx`, the single monolithic component re-rendered its entire tree on every state update.
+  - Crucially, `borderWidth: state.visual.borderWidth` (cycling between 1, 2, 3, 4) and `<Text>{state.visual.symbol}</Text>` were bound to React state inside the very `Animated.View` executing native scale transforms.
+  - On Android, mutating `borderWidth` and `TextView` content invalidates view geometry and triggers `requestLayout()` calls on the UI thread, causing layout thrashing and dropped animation frames on the RenderThread during active scaling.
+
+#### 2. Architectural Solution
+- **Decoupled Memoized Visual Subcomponents (`src/features/visualizer/components/VisualRhythmSurface.tsx`):**
+  - **`VisualExpressiveCanvas` (Layer A - Memoized):** Isolated expressive kinetic surface hosting `scaleAnim`, `auraScaleAnim`, `opacityAnim`, and `activeAnimationRef`. Subscribes directly to `onVisualCue` imperatively; completely bypasses React VDOM diffing during playback. Uses fixed `borderWidth: 3` and stable geometry to eliminate Android `requestLayout()` thrashing. Re-renders only on transport transitions (`isPaused`, `isBuffering`, `isRest`, `enabled`, `reducedMotion`), never on beat/bar progression.
+  - **`VisualInformationalHUD` (Layer B - Memoized):** Displays the secondary 4/4 beat indicator row (`Beat 1..4`), bar progression badge (`BAR X/6`), and semantic status text. Re-renders on beat progression in its own lightweight tree without touching Layer A animation nodes.
+  - **`VisualHeader` (Memoized):** Static brand header and toggles (`ON/MUTED`, `CALM/MOTION`). Never re-renders during playback.
+  - **`VisualCalibrationPanel` (Memoized):** Interactive latency lead pills (`16ms`, `40ms`, `60ms`) and software telemetry readout.
+- **Controlled Low-Frequency Telemetry Ingestion (`src/features/visualizer/useVisualizer.ts`):**
+  - High-frequency software telemetry recording and ring buffering (up to 20 records) remain fully functional in `VisualRhythmEngine`.
+  - In `useVisualizer`, telemetry emissions to React state (`setLatestTelemetry`) are throttled using `lastTelemetryTimeRef` to at most once per 1000ms ($\le 1\text{ Hz}$) or on manual calibration pill selection.
+- **Native Animation Driver Preservation:**
+  - Retained `useNativeDriver: true` across all scale and opacity animation sequences.
+  - Clamped scale strictly to `1.0` in reduced-motion mode with non-motion high-contrast opacity pulsing.
+  - Clean lifecycle unmount: cancels active animations and unsubscribes imperative cue and state listeners without leaks.
+
+#### 3. Automated Verification & Metrics
+- Added Test 16 to `scripts/test-visual-engine.js`:
+  - Verified imperative animation callback fires synchronously without requiring state listeners.
+  - Verified engine telemetry buffering preserves all records while React telemetry throttling restricts state updates to 1 pass across high-frequency cue bursts.
+  - Verified HUD state consistency (bar, beat, role, label, rest/pause/buffer).
+  - Verified reduced-motion mode locks scale to 1.0 while allowing opacity pulse.
+  - Verified complete listener cleanup on unmount with zero leaks or duplicate dispatches.
+  - Status: **ALL 16 TESTS PASSED**.
+- Entire automated test suite (`npm test`):
+  - Audio Engine: **13/13 PASSED**
+  - Synchronization & Event Scheduler: **14/14 PASSED**
+  - Haptic Engine: **10/10 PASSED**
+  - Visual Rhythm Engine: **16/16 PASSED** (up from 15)
+  - Synchronized Lyrics Engine: **11/11 PASSED**
+  - Total: **64/64 UNIT TESTS PASSED** across all 5 engines.
+- TypeScript strict typecheck (`npm run typecheck`): **PASSED (0 errors)**.
+- Android bundling verification (`npx expo export --platform android --no-bytecode`): **PASSED (1,186 modules bundled in 4.4s)**.
+
+---
+
+### Status
+Stage A.6: React Rendering Decoupling and Visual Performance Optimization is **COMPLETE** and verified. Ready for user review.
+
+---
+
+### Stage A.7.1: MasterClock and Scheduler Hardening
+**Date:** 2026-11-22
+
+#### 1. Context and Problem
+- The Stage A.7 engineering audit identified a potential temporal instability in `MasterClock`: during continuous forward playback, if native ExoPlayer ticks arrived with timestamps slightly behind JavaScript forward extrapolation, `getEstimatedPositionMs()` could jump backwards by 5–20ms.
+- In `PriorityEventScheduler`, minor timer jitter or sub-millisecond roundoff could cause an event due at `1000ms` (e.g. evaluating at `998ms` when the staged timeout fires) to be deferred until the next 20ms polling interval, causing an artificial 18ms dispatch latency spike.
+- Stage A.7.1 hardened the temporal foundation across `ExpoAudioEngine` and `PriorityEventScheduler` before implementing continuous visual animation.
+
+#### 2. Architectural Solution
+- **Monotonic Forward Progression Clamp (`src/engines/audio/ExpoAudioEngine.ts`):**
+  - Added `lastEstimatedPositionMs` and `monotonicRevision` tracking to `ExpoAudioEngine`.
+  - During uninterrupted forward playback (`status === 'playing'` and `rate > 0`), `getEstimatedPositionMs()` enforces non-decreasing values:
+    $$\text{estimatedPositionMs} = \min(\max(\text{lastEstimatedPositionMs}, \text{clampedProjectedMs}), \text{durationMs})$$
+  - Handled all timeline discontinuities cleanly:
+    - **Backward Seek:** Immediately resets `monotonicRevision = this.timelineRevision` and establishes `lastEstimatedPositionMs = clampedMs`. No sticky floor.
+    - **Forward Seek:** Immediately updates `lastEstimatedPositionMs = clampedMs` and revision.
+    - **Track Replacement (`load`):** Resets clock state, revision, and monotonic floor to 0ms.
+    - **Stop:** Resets floor to 0ms and advances timeline revision.
+    - **Pause:** Freezes estimated position at current value.
+    - **Resume:** Re-anchors clock at paused position with zero artificial time jump.
+    - **Buffering:** Freezes estimation during buffering; re-anchors to native position when buffering clears.
+    - **Playback Rate Change:** Re-anchors extrapolation anchor to current native position and updates velocity without jump.
+- **Scheduler Due-Event Tolerance (`src/engines/event-scheduler/PriorityEventScheduler.ts`):**
+  - Defined `DUE_EVENT_TOLERANCE_MS = 3` (imperceptible to human senses, $<1/5$th of a 60Hz display frame).
+  - In `tick()`, events dispatch when:
+    $$\text{event.scheduledTimestampMs} \le \text{currentPosition} + \text{dueEventToleranceMs}$$
+  - Absorbs minor sub-frame timer jitter, completely eliminating the 20ms polling deferral.
+  - In `scheduleNextStagedTimer()`, computes `timeRemainingMs = nextEvent.scheduledTimestampMs - (currentPosition + dueEventToleranceMs)` to wake up exactly when due.
+  - Single code path in `tick()` enforces identical timing rules across both polling and staged-timer paths.
+
+#### 3. Automated Verification & Metrics
+- Expanded `scripts/test-audio-engine.js` from 13 to 16 tests:
+  - Test 14: Monotonic forward progression & delayed native update resilience.
+  - Test 15: Timeline discontinuities: backward seek, forward seek & track replacement.
+  - Test 16: Pause & resume continuous re-anchoring without artificial time jump.
+  - Status: **ALL 16 TESTS PASSED**.
+- Expanded `scripts/test-synchronization.js` from 14 to 16 tests:
+  - Test 15: Due-event dispatch tolerance (3ms) and sub-frame precision.
+  - Test 16: Competing timer paths and staged timeout race safety.
+  - Status: **ALL 16 TESTS PASSED**.
+- Entire automated test suite (`npm test`):
+  - Audio Engine: **16/16 PASSED** (up from 13)
+  - Synchronization & Event Scheduler: **16/16 PASSED** (up from 14)
+  - Haptic Engine: **10/10 PASSED**
+  - Visual Rhythm Engine: **16/16 PASSED**
+  - Synchronized Lyrics Engine: **11/11 PASSED**
+  - Total: **69/69 UNIT TESTS PASSED** across all 5 engines.
+- TypeScript strict typecheck (`npm run typecheck`): **PASSED (0 errors)**.
+- Android bundling verification (`npx expo export --platform android --no-bytecode`): **PASSED (1,186 modules bundled in 5.4s)**.
+
+---
+
+### Status
+Stage A.7.1: MasterClock and Scheduler Hardening is **COMPLETE** and verified. Ready for user review.
+
+---
+
+### Stage A.7.1.2: Visual Animation Lifecycle Correction
+**Date:** 2026-11-22
+
+#### 1. Context and Problem
+- Physical testing on a Redmi Android 15 device confirmed rock-solid transport and consistent haptics, but noted that 1–2 visual beats were still missed during playback.
+- A read-only investigation traced the defect to two animation lifecycle issues:
+  1. **Beat 1 Cancellation:** On playback start, `VisualRhythmEngine` emitted `isPaused: false` while leaving `isRest: true`. When Beat 1 (`b1-1` at 0ms) initiated, a subsequent React render with `isRest: true` caused `VisualExpressiveCanvas`'s settling effect to abort the animation mid-flight via `activeAnimationRef.current.stop()`.
+  2. **Final Resolution Truncation:** Bar 6 Beat 4 (`b6-4` at 11500ms) has a 300ms envelope (40ms attack + 260ms decay), active through 11784ms (11800ms audio time). `VisualRhythmEngine` prematurely triggered `isRest = true` at `positionMs >= 11600` (116ms into the beat), aborting the animation 184ms early.
+  3. **Settling Effect Conflation:** `VisualExpressiveCanvas` conflated genuine transport interruptions (mute, pause, buffering) with active musical rests (`isRest`), stopping active animations whenever `isRest` was present.
+
+#### 2. Architectural Solution
+- **Active Groove Establishment (`src/engines/visual/VisualRhythmEngine.ts`):**
+  - When `status === 'playing'`, immediately set `isPaused: false` AND `isRest: false`.
+  - When stopped or idle, clear `activeCue: null`.
+- **300ms Resolution Envelope Protection (`src/engines/visual/VisualRhythmEngine.ts`):**
+  - Updated musical rest transition threshold from `positionMs >= 11600` to `positionMs >= 11800`, ensuring the entire 300ms envelope completes naturally before resting state begins.
+- **Settling Effect Conflation Elimination (`src/features/visualizer/components/VisualRhythmSurface.tsx`):**
+  - Transport interruptions (mute, pause, buffering) continue to forcibly stop active animations and settle to baseline 1.0.
+  - Active musical rest (`isRest` while actively playing) now only settles if `!activeAnimationRef.current`. Never cancels an active cue animation mid-flight.
+
+#### 3. Automated Verification & Metrics
+- Updated Test 6 in `scripts/test-visual-engine.js` to verify resolution active at 11600ms and resting at 11800ms.
+- Added Test 17: First-beat lifecycle, active groove establishment, and stale resting state immunity.
+- Added Test 18: Final-resolution 300ms envelope, post-resolution musical rest (11800ms), and transport interrupt safety.
+- Entire automated test suite (`npm test`):
+  - Audio Engine: **16/16 PASSED**
+  - Synchronization & Event Scheduler: **16/16 PASSED**
+  - Haptic Engine: **10/10 PASSED**
+  - Visual Rhythm Engine: **18/18 PASSED** (up from 16)
+  - Synchronized Lyrics Engine: **11/11 PASSED**
+  - Total: **71/71 UNIT TESTS PASSED** across all 5 engines.
+- TypeScript strict typecheck (`npm run typecheck`): **PASSED (0 errors)**.
+- Android bundling verification (`npx expo export --platform android --no-bytecode`): **PASSED (1,186 modules bundled in 4.5s)**.
+
+---
+
+### Status
+Stage A.7.1.2: Visual Animation Lifecycle Correction is **COMPLETE** and verified. Ready for user review.
+
+---
+
+### Stage A.7.2: Hybrid Continuous Motion Architecture (Stages A.7.2.1 & A.7.2.2)
+**Date:** 2026-11-22
+
+#### 1. Context and Problem
+- Physical testing on a Redmi A5 (MediaTek Helio G36, 60Hz display) identified the **Dead-Zone Problem**: discrete visual pulses with 135–160ms envelopes left the visual surface motionless for 340–365ms ($> 70\%$ of active playback time between 500ms beats at 120 BPM).
+- Snare backbeat attacks of 25ms spanned only 1.5 frames on 60Hz displays, making them visually subliminal.
+- Stopping animations abruptly on incoming beats produced visible inflection kinks.
+
+#### 2. Architectural Solution
+- **Stage A.7.2.1: Engine Contracts & Analytical Energy Model:**
+  - Extended `VisualCueAnimationPayload` with 3-layer motion parameters:
+    - Layer 1 (Core): `targetScaleX`, `targetScaleY` for directional deformation.
+    - Layer 2 (Energy Field): `targetFieldScale`, `targetFieldOpacity`, `energyAccumulator`.
+    - Layer 3 (Ripple): `triggerRipple`, `targetRippleScale`, `targetRippleOpacity`, `rippleDurationMs`.
+  - Implemented analytical scalar energy accumulator in `VisualRhythmEngine` evaluated at each cue arrival using track audio timestamps (`event.targetTimestampMs`):
+    $$E(t_k) = \min\left(1.0, \, E_{rest} + (E(t_{k-1}) - E_{rest}) \cdot e^{-\lambda \Delta t} + \Delta E_k\right)$$
+    with $E_{rest} = 0.05$ and $\lambda = 2.5\text{ s}^{-1}$.
+  - Reconciled exact ambient floor targets: resting baseline at $E = E_{rest}$ produces scale 1.05 and opacity 0.25; peak at $E = 1.00$ produces scale 1.40 and opacity 0.75.
+  - Implemented transport lifecycle policies: pause preserves energy state; seek and stop reset energy to $E_{rest} = 0.05$ and coordinate with timeline revision changes.
+- **Stage A.7.2.2: Native Layered Motion Canvas Implementation (`VisualRhythmSurface.tsx`):**
+  - Refactored `VisualExpressiveCanvas` to manage seven persistent native animated values via `useRef`:
+    - `coreScaleX` (1.0), `coreScaleY` (1.0), `coreOpacity` (0.35).
+    - `fieldScale` (1.05), `fieldOpacity` (0.25).
+    - `rippleScale` (1.0), `rippleOpacity` (0.0).
+  - Layer 1 (Core Node): Executes directional deformation with quad easing (kick horizontal squash $1.35 \times 1.25$, snare vertical snap $1.15 \times 1.30$, accent burst $1.45 \times 1.45$).
+  - Layer 2 (Energy Field): Executes continuous ambient breathing by ramping up over 50ms and decaying over 450ms toward the ambient floor (scale 1.05, opacity 0.25), smoothly bridging the 500ms beat grid.
+  - Layer 3 (Ripple): Triggered strictly on major accents (`b6-3`) and resolution (`b6-4`). Ordinary downbeats and backbeats (`triggerRipple === false`) never stop, restart, or interfere with active ripples.
+  - Multi-modal accessibility: Reduced-motion mode locks all kinetic scales strictly to 1.0 while preserving opacity rhythms, glyphs, and high-contrast indicators.
+
+#### 3. Automated Verification & Metrics
+- Added Tests 19 to 24 in `scripts/test-visual-engine.js`:
+  - Test 19: Reconciled ambient floor and exponential energy decay.
+  - Test 20: Directional deformation geometry for kick, snare, and accents.
+  - Test 21: Three-layer payload generation and numerical bounds across all 24 canonical events.
+  - Test 22: Ripple trigger policy (strictly triggered for `b6-3` and `b6-4`).
+  - Test 23: Complete transport lifecycle and energy state preservation across pause, resume, seek, and stop.
+  - Test 24: Reduced-motion mode invariants.
+- Entire automated test suite (`npm test`):
+  - Audio Clock Engine: **16/16 PASSED**
+  - Synchronization & Event Scheduler: **16/16 PASSED**
+  - Haptic Engine: **10/10 PASSED**
+  - Visual Rhythm Engine: **24/24 PASSED** (up from 18)
+  - Synchronized Lyrics Engine: **11/11 PASSED**
+  - Total: **77/77 UNIT TESTS PASSED** across all 5 engines.
+- TypeScript strict typecheck (`npm run typecheck`): **PASSED (0 errors)**.
+- Android bundling verification (`npx expo export --platform android --no-bytecode`): **PASSED (1,186 modules bundled in 4.7s)**.
+
+---
+
+### Status
+Stage A.7.2.2: Native Layered Motion Canvas Implementation is **COMPLETE** and verified. Ready for user review.
+
+---
+
+### Stage A.7.2.3.7: Startup Lifecycle Correction — Implementation
+**Date:** 2026-11-22
+
+#### 1. Context and Problem
+- Physical testing of Stage A.7.2.2 on the Redmi Android device revealed an initial playback transition defect: "Every time Play is pressed, the first part of the music begins, then there is one small lag or jump, after which playback and visual synchronization continue smoothly for the rest of the track."
+- Investigation (Stages A.7.2.3.1 – A.7.2.3.6) established:
+  - In `ExpoAudioEngine.play()`, calling `this.updateStatus('playing')` prematurely advanced JavaScript's extrapolated clock for 50–150ms before native Android audio buffers (ExoPlayer/AudioTrack) began outputting sound.
+  - When the first native `playbackStatusUpdate` arrived reporting `currentTime = 0.0s`, the JS clock experienced a sudden backward step or re-anchoring jump.
+  - Furthermore, rapid transport toggling (Play → Pause → Play) could cause unversioned delayed status callbacks from previous attempts to falsely confirm newer playback attempts.
+
+#### 2. Architectural Solution
+- **`ExpoAudioEngine` (`src/engines/audio/ExpoAudioEngine.ts`):**
+  - Added `currentSource: AudioSourceInput | null`, `isAwaitingNativeStart: boolean`, `currentPlaybackAttemptId: number`, and `startupTimeoutHandle: ReturnType<typeof setTimeout> | null`.
+  - In `load()`: retained `this.currentSource = source`.
+  - In `play()`: flag `isAwaitingNativeStart = true` and arm 3000ms safety timeout via `armStartupTimeout()`. Defer `updateStatus('playing')` until genuine native confirmation arrives.
+  - In `getEstimatedPositionMs()`: freeze position at `this.clock.positionMs` without forward extrapolation while `isAwaitingNativeStart === true`.
+  - In `pause()`, `stop()`, and `seek()`: if startup cancellation occurs (`isAwaitingNativeStart === true`), immediately dispose of the unconfirmed native player (`cleanupPlayer()`) and reset `isAwaitingNativeStart = false`. On subsequent play/seek, instantiate a fresh player via `recreatePlayer()` with preserved source, seek position, and metadata.
+  - In `handleNativeStatusUpdate()`: enforce callback isolation by strictly discarding updates where `status.id !== this.player?.id`. Transition master clock status to `'playing'` and anchor clock upon first confirmed playing tick.
+  - Normal mid-track pause and resume retain the existing player instance without recreation.
+- **`PriorityEventScheduler` (`src/engines/event-scheduler/PriorityEventScheduler.ts`):**
+  - In `start()`: execute an immediate `this.tick()` upon starting to eliminate up to 20ms of polling interval latency for opening boundary events.
+  - In `tick()` and `scheduleBatch()`: implemented bounded opening boundary kick exception ($T=0\text{ms}$ opening cue `b1-1` preserved when $0\text{ms} \le \text{currentPos} \le 100\text{ms}$; dropped if first confirmation arrives > 100ms; never replayed after seeking to 2000ms).
+- **Automated Verification Suites:**
+  - Extended `scripts/test-audio-engine.js` with Tests 17–27 covering asynchronous startup delay (100ms), startup abort via pause/stop/seek, player recreation, stale callback rejection from disposed players, rapid play/pause cycling, startup timeout, and normal mid-track pause/resume. (All 27 passed).
+  - Extended `scripts/test-synchronization.js` with Tests 17–18 verifying bounded boundary kick exception across 0, 10, 35, 80, 150ms delays and post-seek rejection, as well as immediate tick execution on `start()`. (All 18 passed).
+  - Updated `scripts/test-visual-engine.js` Test 10 with start dispatch tracking to account for immediate tick on scheduler start. (All 24 passed).
+
+#### 3. Automated Verification & Metrics
+- Entire automated test suite (`npm test`):
+  - Audio Clock Engine: **27/27 PASSED** (up from 16)
+  - Synchronization & Event Scheduler: **18/18 PASSED** (up from 16)
+  - Haptic Engine: **10/10 PASSED**
+  - Visual Rhythm Engine: **24/24 PASSED**
+  - Synchronized Lyrics Engine: **11/11 PASSED**
+  - Total: **90/90 UNIT TESTS PASSED** across all 5 engines.
+- TypeScript strict typecheck (`npm run typecheck`): **PASSED (0 errors)**.
+- Android bundling verification (`npx expo export --platform android --no-bytecode`): **PASSED (1,186 modules bundled in 5.8s)**.
+
+---
+
+### Status
+Stage A.7.2.3.7: Startup Lifecycle Correction is **COMPLETE** and verified. Ready for physical testing on Redmi Android device.
+
+---
+
+### Stage A.7.2.3.10: Seek Lifecycle and Landing Synchronization Correction
+**Date:** 2026-11-22
+
+#### 1. Context and Problem
+- Physical testing on a Redmi Android device revealed an asymmetry in seeking:
+  - Forward seeking (e.g. from 4s to 8s) worked reliably.
+  - Backward seeking (e.g. from 8s to 3s) caused visual animations to take noticeable time to respond, even though audio seeking occurred immediately.
+- Investigations (Stages A.7.2.3.8 & A.7.2.3.9) identified four converging causes:
+  1. **Pre-Seek Native Callback Clock Poisoning:** In `ExpoAudioEngine`, after issuing a backward seek (e.g. 8000ms to 3000ms), in-flight native status updates from the pre-seek position (e.g. 7950ms) arrived. Because `isSeekingNative` had completed, these updates overwrote `clock.positionMs = 7950`, and `getEstimatedPositionMs()` latched into `lastEstimatedPositionMs` via `Math.max()`, locking the monotonic clock at ~8000ms for 5 seconds until real audio caught up.
+  2. **Seek Landing Boundary Cue Dropping:** With a 60ms visual lead, a visual cue at the seek landing point (e.g. 3000ms) has a compensated trigger timestamp of $3000 - 60 = 2940\text{ms}$. When seeking to 3000ms, the scheduler evaluated $2940 < 3000 - 50 = 2950\text{ms}$ and dropped the cue as stale.
+  3. **React useEffect Rescheduling Latency:** In `NowPlayingCard.tsx`, sensory cues were rescheduled inside an asynchronous React passive `useEffect([timelineRevision])`, introducing a 50–150ms delay before the scheduler queue was populated.
+  4. **Competing Running Settle Animation:** In `VisualRhythmSurface.tsx`, transport changes initiated a 150ms `settleAnim` returning values to baseline. When incoming visual cues arrived, the running settle animation was not cancelled, competing with and dampening the cue animation.
+
+#### 2. Architectural Solution
+- **`ExpoAudioEngine` (`src/engines/audio/ExpoAudioEngine.ts`):**
+  - Added seek isolation state: `activeSeekTargetMs: number | null`, `activeSeekRevision: number`, `seekSafetyTimeoutHandle: ReturnType<typeof setTimeout> | null`, `SEEK_CONFIRMATION_WINDOW_MS = 250`, `SEEK_SAFETY_TIMEOUT_MS = 1500`.
+  - In `seek()`: suspend forward monotonic floor (`monotonicRevision = 0`), set `activeSeekTargetMs = clampedMs`, and arm 1500ms safety timeout.
+  - In `getEstimatedPositionMs()`: return exact seek target position without extrapolation while `activeSeekTargetMs !== null`.
+  - In `handleNativeStatusUpdate()`: while `activeSeekTargetMs !== null`, any status update with $|posMs - activeSeekTargetMs| > 250\text{ms}$ is discarded as a stale pre-seek update. When an update arrives within 250ms, native seek is confirmed: `activeSeekTargetMs` is cleared, safety timeout cancelled, clock re-anchored, and forward monotonic floor reactivated (`monotonicRevision = clock.timelineRevision`).
+  - In `pause()`, `stop()`, `unload()`, `cleanupPlayer()`: clear seek safety timeout and set `activeSeekTargetMs = null`.
+- **`PriorityEventScheduler` (`src/engines/event-scheduler/PriorityEventScheduler.ts`):**
+  - Added `ScoreProvider` type export and declared `setScoreProvider(provider: ScoreProvider | null)` on `IEventScheduler`.
+  - In `handleRevisionChange(newRevision)`: immediately invoke `this.scoreProvider(this, newRevision)` synchronously upon revision changes, populating new cues with 0ms delay.
+  - In `scheduleBatch()` and `tick()`: implemented Seek Landing Boundary Exception ($|currentPos - targetTimestampMs| \le 60\text{ms}$). Preserves and dispatches landing cues immediately on the landing tick while keeping genuinely expired cues ($> 60\text{ms}$) dropped.
+- **`NowPlayingCard` (`src/features/playback/components/NowPlayingCard.tsx`):**
+  - Registered synchronous score provider with `eventScheduler` on mount:
+    `eventScheduler.setScoreProvider((scheduler, rev) => { hapticEngine.reset(); scheduleDemoTrackSensoryCues(scheduler, rev); })`.
+  - Removed passive `useEffect([timelineRevision])` rescheduling, eliminating 50–150ms delay.
+- **`VisualRhythmSurface` (`src/features/visualizer/components/VisualRhythmSurface.tsx`):**
+  - Added `activeSettleAnimRef` tracking the running settle animation.
+  - In `onVisualCue`: immediately cancel any running settle animation (`activeSettleAnimRef.current.stop()`) when an incoming visual cue arrives.
+  - Cleaned up on unmount and transition.
+- **Automated Verification Suites:**
+  - Extended `scripts/test-audio-engine.js` with Tests 28–30 (stale pre-seek callback rejection, native seek confirmation & floor reactivation, 1500ms safety timeout). (All 30 passed).
+  - Extended `scripts/test-synchronization.js` with Tests 19–21 (seek landing boundary exception, stale cue rejection beyond 60ms, synchronous score provider). (All 21 passed).
+  - Extended `scripts/test-visual-engine.js` with Test 25 (backward seek visual recovery, immediate landing cue delivery, clean energy reset). (All 25 passed).
+
+#### 3. Automated Verification & Metrics
+- Entire automated test suite (`npm test`):
+  - Audio Clock Engine: **30/30 PASSED** (up from 27)
+  - Synchronization & Event Scheduler: **21/21 PASSED** (up from 18)
+  - Haptic Engine: **10/10 PASSED**
+  - Visual Rhythm Engine: **25/25 PASSED** (up from 24)
+  - Synchronized Lyrics Engine: **11/11 PASSED**
+  - Total: **97/97 UNIT TESTS PASSED** across all 5 engines.
+- TypeScript strict typecheck (`npm run typecheck`): **PASSED (0 errors)**.
+- Android bundling verification (`npx expo export --platform android --no-bytecode`): **PASSED (1,186 modules bundled in 10.7s)**.
+
+---
+
+### Status
+Stage A.7.2.3.10: Seek Lifecycle and Landing Synchronization Correction is **COMPLETE** and verified. Ready for physical testing on Redmi Android device.
+
+---
+
+### Stage A.7.2.3.10: Physical Device Validation
+**Date:** 2026-11-22
+
+#### 1. User-Confirmed Physical Tests (Redmi Android Device)
+Physical testing of the Stage A.7.2.3.10 seek lifecycle and landing synchronization correction was conducted and confirmed on a physical Redmi Android device across five scenarios:
+
+1. Backward seek: 8s → 3s — PASS.
+2. Forward seek: 4s → 8s — PASS.
+3. Paused seek: 6s → 3s → resume — PASS.
+4. Rapid alternating seeks — PASS.
+5. Small seek adjustments — PASS.
+
+---
+
+### Status
+Stage A.7.2.3.10: Physical Device Validation is **COMPLETE** (all 5 scenarios user-confirmed). Ready for final pre-commit review.

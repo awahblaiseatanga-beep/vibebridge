@@ -105,6 +105,69 @@ export type VisualCueEvent = DispatchedEvent<VisualCuePayload>;
 export type VisualStateListener = (state: VisualRhythmState) => void;
 
 /**
+ * Visual Latency Calibration Offsets (ms).
+ * - 16ms: baseline default
+ * - 40ms: intermediate value
+ * - 60ms: proposed higher compensation
+ */
+export type VisualCalibrationOffset = 16 | 40 | 60;
+export const VISUAL_CALIBRATION_OFFSETS: readonly VisualCalibrationOffset[] = [16, 40, 60];
+
+/**
+ * Diagnostic software telemetry for visual synchronization calibration.
+ * Captures software event progression timestamps (performance.now()).
+ * Explicitly distinguished from physical display photons and speaker acoustic output.
+ */
+export interface VisualSyncTelemetryRecord {
+  id: string;
+  role: string;
+  selectedVisualOffsetMs: number;
+  targetTimestampMs: number;
+  scheduledTimestampMs: number;
+  schedulerDispatchMonotonicMs: number;
+  onVisualCueMonotonicMs: number;
+  animationInitiatedMonotonicMs: number;
+  dispatchLatencyMs: number;
+  setupLatencyMs: number;
+  timelineRevision: number;
+}
+
+export type VisualTelemetryListener = (record: VisualSyncTelemetryRecord) => void;
+
+/**
+ * Direct animation payload delivered synchronously to imperative visual listeners
+ * upon receiving a scheduled visual event. Completely bypasses the React render loop.
+ */
+export interface VisualCueAnimationPayload {
+  event: VisualCueEvent;
+  visual: VisualBeatVisual;
+  intensityLevel: VisualIntensityLevel;
+  targetScale: number;
+  auraTarget: number;
+  attackMs: number;
+  decayMs: number;
+  totalDurationMs: number;
+  reducedMotion: boolean;
+
+  // Layer 1: Core Node Directional Deformation (Stage A.7.2.1)
+  targetScaleX: number;
+  targetScaleY: number;
+
+  // Layer 2: Continuous Energy Field (Stage A.7.2.1)
+  targetFieldScale: number;
+  targetFieldOpacity: number;
+  energyAccumulator: number;
+
+  // Layer 3: Acoustic Aura / Ripple (Stage A.7.2.1)
+  triggerRipple: boolean;
+  targetRippleScale: number;
+  targetRippleOpacity: number;
+  rippleDurationMs: number;
+}
+
+export type VisualCueListener = (payload: VisualCueAnimationPayload) => void;
+
+/**
  * Interface contract for VisualRhythmEngine.
  */
 export interface IVisualRhythmEngine {
@@ -116,6 +179,16 @@ export interface IVisualRhythmEngine {
   attachMasterClock(clock: MasterClock): void;
   detachMasterClock(): void;
   onVisualStateChange(listener: VisualStateListener): () => void;
+  onVisualCue(listener: VisualCueListener): () => void;
+  onTelemetry(listener: VisualTelemetryListener): () => void;
+  getLatestTelemetry(): VisualSyncTelemetryRecord | null;
+  getTelemetryHistory(): VisualSyncTelemetryRecord[];
+  clearTelemetry(): void;
+  setVisualCalibrationOffset(offsetMs: VisualCalibrationOffset): void;
+  getVisualCalibrationOffset(): VisualCalibrationOffset;
+  recordAnimationInitiated(cueId: string, timestampMs?: number): void;
+  getEnergyAccumulator(): number;
+  resetEnergy(): void;
   getState(): VisualRhythmState;
   reset(): void;
   dispose(): void;
