@@ -2,33 +2,28 @@ import React from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { theme } from '@/theme';
+import { ThemeProvider, theme } from '@/theme';
 
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
-      <StatusBar style="light" />
-      <Stack
-        screenOptions={{
-          headerStyle: {
-            backgroundColor: theme.colors.background.base,
-          },
-          headerTintColor: theme.colors.text.primary,
-          headerTitleStyle: {
-            fontWeight: '700',
-          },
-          contentStyle: {
-            backgroundColor: theme.colors.background.base,
-          },
-        }}
-      >
-        <Stack.Screen
-          name="index"
-          options={{
+      <ThemeProvider initialMode="dark">
+        <StatusBar style="light" />
+        <Stack
+          screenOptions={{
             headerShown: false,
+            contentStyle: {
+              backgroundColor: theme.colors.background.base,
+            },
           }}
-        />
-      </Stack>
+        >
+          <Stack.Screen name="index" />
+          <Stack.Screen name="learn" />
+          <Stack.Screen name="player" />
+          <Stack.Screen name="progress" />
+          <Stack.Screen name="settings" />
+        </Stack>
+      </ThemeProvider>
     </SafeAreaProvider>
   );
 }

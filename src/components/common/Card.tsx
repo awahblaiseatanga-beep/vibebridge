@@ -1,27 +1,45 @@
 import React, { ReactNode } from 'react';
-import { StyleSheet, View, ViewStyle } from 'react-native';
-import { theme } from '@/theme';
+import { StyleSheet, View, ViewStyle, StyleProp } from 'react-native';
+import { useAppTheme } from '@/theme';
 
-interface CardProps {
+export interface CardProps {
   children: ReactNode;
-  style?: ViewStyle;
-  variant?: 'surface' | 'elevated' | 'highlight';
+  style?: StyleProp<ViewStyle>;
+  variant?: 'surface' | 'secondary' | 'elevated' | 'highlight';
+  radius?: 'default' | 'large' | 'hero';
 }
 
 export const Card: React.FC<CardProps> = ({
   children,
   style,
   variant = 'surface',
+  radius = 'default',
 }) => {
+  const { colors, isDark } = useAppTheme();
+
   const getBackgroundColor = () => {
     switch (variant) {
       case 'elevated':
-        return theme.colors.background.elevated;
+        return colors.background.elevated;
+      case 'secondary':
+        return colors.background.secondary;
       case 'highlight':
-        return theme.colors.background.highlight;
+        return colors.background.highlight;
       case 'surface':
       default:
-        return theme.colors.background.surface;
+        return colors.background.surface;
+    }
+  };
+
+  const getBorderRadius = () => {
+    switch (radius) {
+      case 'hero':
+        return 24;
+      case 'large':
+        return 20;
+      case 'default':
+      default:
+        return 16;
     }
   };
 
@@ -29,7 +47,12 @@ export const Card: React.FC<CardProps> = ({
     <View
       style={[
         styles.base,
-        { backgroundColor: getBackgroundColor() },
+        {
+          backgroundColor: getBackgroundColor(),
+          borderColor: colors.border.subtle,
+          borderRadius: getBorderRadius(),
+          shadowColor: isDark ? '#000000' : '#202638',
+        },
         style,
       ]}
     >
@@ -40,9 +63,11 @@ export const Card: React.FC<CardProps> = ({
 
 const styles = StyleSheet.create({
   base: {
-    borderRadius: theme.borderRadius.lg,
     borderWidth: 1,
-    borderColor: theme.colors.border.subtle,
-    padding: theme.spacing.md,
+    padding: 16,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
   },
 });
