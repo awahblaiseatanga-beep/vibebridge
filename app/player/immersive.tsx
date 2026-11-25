@@ -16,24 +16,27 @@ import { useVisualizer } from '@/features/visualizer';
 import { useHaptics } from '@/features/haptics';
 import { useLyrics } from '@/features/lyrics';
 import { formatMilliseconds } from '@/utils';
+import { useLocalMusicLibrary } from '@/features/library';
 
 export default function ImmersiveExperienceScreen() {
   const router = useRouter();
   const { colors, isDark } = useAppTheme();
+  const playback = usePlayback();
   const {
     positionMs,
     durationMs,
     isPlaying,
-    play,
     pause,
     seek,
-  } = usePlayback();
+  } = playback;
 
-  const { enabled: visualEnabled, toggleEnabled: toggleVisual } = useVisualizer();
+  const { activeTrack, playTrack } = useLocalMusicLibrary();
+  const { enabled: visualEnabled, toggleEnabled: toggleVisual, onVisualCue } = useVisualizer();
   const { enabled: hapticsEnabled, toggleEnabled: toggleHaptics, triggerTest } = useHaptics();
   const { activeSegment, previousSegment, upcomingSegments } = useLyrics();
 
-  const [currentBeat, setCurrentBeat] = useState(2);
+  const [currentBeat, setCurrentBeat] = useState(1);
+  const [currentBar, setCurrentBar] = useState(1);
   const [kickActive, setKickActive] = useState(false);
   const [snareActive, setSnareActive] = useState(false);
 
@@ -41,60 +44,84 @@ export default function ImmersiveExperienceScreen() {
   const pulseAnim1 = useRef(new Animated.Value(1)).current;
   const pulseAnim2 = useRef(new Animated.Value(1)).current;
 
-  // Kinetic ring animations synced to play state
+  // Reset visual ring state when paused or stopped
   useEffect(() => {
-    if (!isPlaying) return;
+    if (!isPlaying) {
+      setKickActive(false);
+      setSnareActive(false);
+      pulseAnim1.setValue(1);
+      pulseAnim2.setValue(1);
+    }
+  }, [isPlaying, pulseAnim1, pulseAnim2]);
 
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim1, {
-          toValue: 1.15,
-          duration: 250,
-          easing: Easing.out(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim1, {
-          toValue: 1,
-          duration: 250,
-          easing: Easing.in(Easing.ease),
-          useNativeDriver: true,
-        }),
-      ])
-    );
-    loop.start();
-
-    return () => loop.stop();
-  }, [isPlaying, pulseAnim1]);
-
-  // Rhythm beat ticker for the HUD and tactile triggers
+  // Synchronize kinetic rings & HUD strictly to authoritative SEE cues from PriorityEventScheduler
   useEffect(() => {
-    if (!isPlaying) return;
-    const interval = setInterval(() => {
-      setCurrentBeat((prev) => {
-        const next = (prev % 4) + 1;
-        if (next === 1 || next === 3) {
-          setKickActive(true);
-          setTimeout(() => setKickActive(false), 140);
-        } else {
-          setSnareActive(true);
-          setTimeout(() => setSnareActive(false), 140);
-        }
-        return next;
-      });
-    }, 500); // 120 BPM = 500ms
+    const unsubscribe = onVisualCue((cue) => {
+      const payload = cue.event?.payload;
+      if (payload?.beat) {
+        setCurrentBeat(Math.floor(payload.beat));
+      }
+      if (payload?.bar) {
+        setCurrentBar(payload.bar);
+      }
 
-    return () => clearInterval(interval);
-  }, [isPlaying]);
+      const isStrong =
+        payload?.role === 'downbeat' ||
+        payload?.role === 'accent' ||
+        payload?.role === 'resolution';
+
+      if (isStrong) {
+        setKickActive(true);
+        setTimeout(() => setKickActive(false), 160);
+        Animated.sequence([
+          Animated.timing(pulseAnim2, {
+            toValue: 1.18,
+            duration: 90,
+            easing: Easing.out(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim2, {
+            toValue: 1,
+            duration: 180,
+            easing: Easing.in(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ]).start();
+      } else {
+        setSnareActive(true);
+        setTimeout(() => setSnareActive(false), 140);
+        Animated.sequence([
+          Animated.timing(pulseAnim1, {
+            toValue: 1.14,
+            duration: 80,
+            easing: Easing.out(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim1, {
+            toValue: 1,
+            duration: 160,
+            easing: Easing.in(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ]).start();
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [onVisualCue, pulseAnim1, pulseAnim2]);
 
   const handlePlayPause = async () => {
     if (isPlaying) {
       await pause();
     } else {
-      await play();
+      await playTrack(activeTrack, playback);
     }
   };
 
-  const progressPercent = durationMs > 0 ? Math.min(100, Math.max(0, (positionMs / durationMs) * 100)) : 0;
+  const effectiveDuration = durationMs || activeTrack.durationMs || 12000;
+  const progressPercent = effectiveDuration > 0 ? Math.min(100, Math.max(0, (positionMs / effectiveDuration) * 100)) : 0;
 
   // Fallback lyric lines if demo track lyrics are streaming
   const activeLyricText = activeSegment ? activeSegment.text : 'Resonating spheres in the quiet glow';
@@ -119,7 +146,9 @@ export default function ImmersiveExperienceScreen() {
           </TouchableOpacity>
           <View style={styles.headerTitleGroup}>
             <View style={styles.headerTitleRow}>
-              <Text style={[styles.headerTrackName, { color: colors.text.primary }]}>Spheres • Halina Rice</Text>
+              <Text style={[styles.headerTrackName, { color: colors.text.primary }]} numberOfLines={1}>
+                {activeTrack.title} • {activeTrack.artist}
+              </Text>
               <View style={[styles.immersiveBadge, { backgroundColor: colors.accent.primary }]}>
                 <Text style={styles.immersiveBadgeText}>IMMERSIVE</Text>
               </View>
@@ -180,7 +209,7 @@ export default function ImmersiveExperienceScreen() {
           {/* Meter & Tempo HUD */}
           <View style={[styles.hudMeterPill, { backgroundColor: colors.background.secondary, borderColor: colors.border.subtle }]}>
             <Text style={[styles.hudMeterText, { color: colors.text.primary }]}>
-              BAR 14 • 4/4 • 120 BPM
+              {`BAR ${currentBar} • 4/4 • ${activeTrack.bpm ? `${activeTrack.bpm} BPM` : 'Adaptive'}`}
             </Text>
           </View>
 
@@ -275,11 +304,15 @@ export default function ImmersiveExperienceScreen() {
             <View style={[styles.coreIconBox, { backgroundColor: colors.accent.primary }]}>
               <Text style={styles.coreIconText}>⚡</Text>
             </View>
-            <Text style={[styles.coreTitle, { color: colors.text.primary }]}>Spheres</Text>
-            <Text style={[styles.coreSub, { color: colors.accent.secondary }]}>120 BPM Pulse</Text>
+            <Text style={[styles.coreTitle, { color: colors.text.primary }]} numberOfLines={1}>
+              {activeTrack.title}
+            </Text>
+            <Text style={[styles.coreSub, { color: colors.accent.secondary }]}>
+              {activeTrack.bpm ? `${activeTrack.bpm} BPM Pulse` : 'Adaptive Pulse'}
+            </Text>
           </View>
 
-          {/* 4. FLOATING TRANSLUCENT SYNCHRONIZED LYRICS OVERLAY */}
+          {/* 4. FLOATING TRANSLUCENT SYNCHRONIZED LYRICS OR ACOUSTIC VISUALIZER OVERLAY */}
           <View
             style={[
               styles.floatingLyricsCard,
@@ -289,41 +322,72 @@ export default function ImmersiveExperienceScreen() {
               },
             ]}
           >
-            {/* Header */}
-            <View style={styles.lyricsCardHeader}>
-              <View style={styles.lyricsHeaderLeft}>
-                <Text style={[styles.lyricsWaveIcon, { color: colors.accent.secondary }]}>〰️</Text>
-                <Text style={[styles.lyricsHeaderTitle, { color: colors.accent.secondary }]}>
-                  SYNCHRONIZED LYRICS
-                </Text>
-              </View>
-              <View style={styles.lyricsHeaderRight}>
-                <Text style={[styles.lyricsActiveCount, { color: colors.text.secondary }]}>
-                  Live In-Sync
-                </Text>
-              </View>
-            </View>
+            {activeTrack.hasLyrics ? (
+              <>
+                {/* Lyrics Header */}
+                <View style={styles.lyricsCardHeader}>
+                  <View style={styles.lyricsHeaderLeft}>
+                    <Text style={[styles.lyricsWaveIcon, { color: colors.accent.secondary }]}>〰️</Text>
+                    <Text style={[styles.lyricsHeaderTitle, { color: colors.accent.secondary }]}>
+                      SYNCHRONIZED LYRICS
+                    </Text>
+                  </View>
+                  <View style={styles.lyricsHeaderRight}>
+                    <Text style={[styles.lyricsActiveCount, { color: colors.text.secondary }]}>
+                      Live In-Sync
+                    </Text>
+                  </View>
+                </View>
 
-            {/* 3-Tier Lyric Hierarchy */}
-            <View style={styles.lyricsTierContainer}>
-              {/* Previous Dimmed Line */}
-              <Text style={[styles.lyricLineDimmed, { color: colors.text.secondary }]} numberOfLines={1}>
-                {previousLyricText}
-              </Text>
+                {/* 3-Tier Lyric Hierarchy */}
+                <View style={styles.lyricsTierContainer}>
+                  <Text style={[styles.lyricLineDimmed, { color: colors.text.secondary }]} numberOfLines={1}>
+                    {previousLyricText}
+                  </Text>
+                  <View style={[styles.lyricActiveRow, { backgroundColor: isDark ? 'rgba(32, 43, 59, 0.7)' : 'rgba(231, 234, 241, 0.7)' }]}>
+                    <View style={[styles.activeAccentBar, { backgroundColor: colors.accent.primary }]} />
+                    <Text style={[styles.lyricLineActive, { color: colors.text.primary }]} numberOfLines={1}>
+                      {activeLyricText}
+                    </Text>
+                  </View>
+                  <Text style={[styles.lyricLineDimmed, { color: colors.text.secondary }]} numberOfLines={1}>
+                    {upcomingLyricText}
+                  </Text>
+                </View>
+              </>
+            ) : (
+              <>
+                {/* Acoustic Signal Processing View for Imported Audio */}
+                <View style={styles.lyricsCardHeader}>
+                  <View style={styles.lyricsHeaderLeft}>
+                    <Text style={[styles.lyricsWaveIcon, { color: colors.accent.secondary }]}>〰️</Text>
+                    <Text style={[styles.lyricsHeaderTitle, { color: colors.accent.secondary }]}>
+                      ACOUSTIC SIGNAL VISUALIZER
+                    </Text>
+                  </View>
+                  <View style={styles.lyricsHeaderRight}>
+                    <Text style={[styles.lyricsActiveCount, { color: colors.accent.secondary }]}>
+                      {activeTrack.bpm ? `${activeTrack.bpm} BPM Sync` : 'Adaptive Transient Sync'}
+                    </Text>
+                  </View>
+                </View>
 
-              {/* Active High-Contrast Line */}
-              <View style={[styles.lyricActiveRow, { backgroundColor: isDark ? 'rgba(32, 43, 59, 0.7)' : 'rgba(231, 234, 241, 0.7)' }]}>
-                <View style={[styles.activeAccentBar, { backgroundColor: colors.accent.primary }]} />
-                <Text style={[styles.lyricLineActive, { color: colors.text.primary }]} numberOfLines={1}>
-                  {activeLyricText}
-                </Text>
-              </View>
-
-              {/* Upcoming Dimmed Line */}
-              <Text style={[styles.lyricLineDimmed, { color: colors.text.secondary }]} numberOfLines={1}>
-                {upcomingLyricText}
-              </Text>
-            </View>
+                <View style={styles.lyricsTierContainer}>
+                  <Text style={[styles.lyricLineDimmed, { color: colors.text.secondary }]}>
+                    Audio Signal Processing: {activeTrack.mimeType?.toUpperCase() || 'PCM Audio'}
+                  </Text>
+                  <View style={[styles.lyricActiveRow, { backgroundColor: isDark ? 'rgba(32, 43, 59, 0.7)' : 'rgba(231, 234, 241, 0.7)' }]}>
+                    <View style={[styles.activeAccentBar, { backgroundColor: colors.accent.primary }]} />
+                    <Text style={[styles.lyricLineActive, { color: colors.text.primary }]} numberOfLines={1}>
+                      {activeTrack.summaryNote || 'Live sensory cues generated from transient acoustic attacks'}
+                    </Text>
+                  </View>
+                  <Text style={[styles.lyricLineDimmed, { color: colors.text.secondary }]}>
+                    {activeTrack.rhythmScore ? `${activeTrack.rhythmScore.length} sensory cues active` : 'Kinetic visual pulses active'}
+                  </Text>
+                </View>
+              </>
+            )}
           </View>
         </View>
 
@@ -333,7 +397,7 @@ export default function ImmersiveExperienceScreen() {
           <TouchableOpacity
             style={[styles.scrubberContainer, { backgroundColor: colors.background.secondary }]}
             activeOpacity={0.9}
-            onPress={() => seek((durationMs || 12000) * 0.5)}
+            onPress={() => seek(effectiveDuration * 0.5)}
           >
             <View style={[styles.scrubberFill, { width: `${progressPercent}%`, backgroundColor: colors.accent.primary }]} />
           </TouchableOpacity>
@@ -348,7 +412,7 @@ export default function ImmersiveExperienceScreen() {
               </Text>
             </View>
             <Text style={[styles.timeLabel, { color: colors.text.secondary }]}>
-              {formatMilliseconds(durationMs || 12000)}
+              {formatMilliseconds(effectiveDuration)}
             </Text>
           </View>
 
@@ -374,7 +438,9 @@ export default function ImmersiveExperienceScreen() {
                 </View>
                 <View>
                   <Text style={[styles.statusCardTitle, { color: colors.text.primary }]}>FEEL HAPTIC</Text>
-                  <Text style={[styles.statusCardSub, { color: colors.text.secondary }]}>Sub-freq 80Hz</Text>
+                  <Text style={[styles.statusCardSub, { color: colors.text.secondary }]}>
+                    {activeTrack.bpm ? `${activeTrack.bpm} BPM` : 'Adaptive'}
+                  </Text>
                 </View>
               </View>
               <View style={[styles.statusIndicatorDot, { backgroundColor: colors.accent.secondary }]} />
@@ -440,7 +506,7 @@ export default function ImmersiveExperienceScreen() {
 
               <TouchableOpacity
                 style={styles.barIconBtn}
-                onPress={() => seek(Math.min(durationMs, positionMs + 3000))}
+                onPress={() => seek(Math.min(effectiveDuration, positionMs + 3000))}
                 accessibilityLabel="Next Section"
               >
                 <Text style={[styles.barCenterIcon, { color: colors.text.primary }]}>⏭</Text>
@@ -496,6 +562,7 @@ const styles = StyleSheet.create({
   headerTrackName: {
     fontSize: 15,
     fontWeight: '700',
+    flex: 1,
   },
   immersiveBadge: {
     paddingHorizontal: 8,
@@ -657,6 +724,7 @@ const styles = StyleSheet.create({
   coreTitle: {
     fontSize: 13,
     fontWeight: '800',
+    paddingHorizontal: 8,
   },
   coreSub: {
     fontSize: 9,

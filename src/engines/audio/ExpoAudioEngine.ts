@@ -15,6 +15,7 @@
 
 import {
   createAudioPlayer,
+  setAudioModeAsync,
   AudioPlayer,
   AudioSource,
   AudioStatus,
@@ -38,6 +39,8 @@ export class ExpoAudioEngine implements AudioEngine {
   private isAwaitingNativeStart = false;
   private currentPlaybackAttemptId = 0;
   private startupTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  private audioModeConfigured = false;
+  private static readonly NATIVE_PREPARE_TIMEOUT_MS = 3000;
 
   // Seek confirmation & callback isolation state (Stage A.7.2.3.10)
   private activeSeekTargetMs: number | null = null;
@@ -102,8 +105,110 @@ export class ExpoAudioEngine implements AudioEngine {
   private handleStartupTimeout(): void {
     this.clearStartupTimeout();
     this.isAwaitingNativeStart = false;
+    const diagnosticPlayer = this.player as any;
+    const statusSnapshot = diagnosticPlayer?.currentStatus ?? null;
+    if (statusSnapshot) {
+      console.warn('[AudioEngine Startup Diagnostic]', {
+        isLoaded: diagnosticPlayer?.isLoaded,
+        isBuffering: diagnosticPlayer?.isBuffering,
+        playing: diagnosticPlayer?.playing,
+        playbackState: statusSnapshot.playbackState,
+        error: statusSnapshot.error,
+      });
+    }
     this.cleanupPlayer();
-    this.handleError('Playback startup timed out after 3000ms awaiting native confirmation.');
+    const detail = statusSnapshot?.error
+      ? ` Native detail: ${statusSnapshot.error}`
+      : '';
+    this.handleError(`Playback startup timed out after 3000ms awaiting native confirmation.${detail}`);
+  }
+
+  private async ensureAudioModeConfigured(): Promise<void> {
+    if (this.audioModeConfigured || typeof setAudioModeAsync !== 'function') {
+      return;
+    }
+    this.audioModeConfigured = true;
+    try {
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        shouldPlayInBackground: false,
+        interruptionMode: 'doNotMix',
+        interruptionModeAndroid: 'doNotMix',
+      });
+    } catch (err) {
+      this.audioModeConfigured = false;
+      console.warn('[AudioEngine] Audio mode setup notice:', err);
+    }
+  }
+
+  /**
+   * Waits for an asynchronously preparing native player (isLoaded === false) to reach
+   * STATE_READY or emit a preparation error before transitioning load() to paused.
+   * No-ops immediately if player.isLoaded is already true (e.g. unit mocks or cached assets).
+   */
+  private async waitForNativePreparation(player: AudioPlayer): Promise<void> {
+    if (player.isLoaded) {
+      return;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+      let sub: { remove: () => void } | null = null;
+
+      const finish = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+          timeoutHandle = null;
+        }
+        if (sub) {
+          sub.remove();
+          sub = null;
+        }
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      };
+
+      sub = player.addListener('playbackStatusUpdate', (status: AudioStatus) => {
+        if (this.player !== player) {
+          finish();
+          return;
+        }
+        if (status.error) {
+          finish(new Error(status.error));
+          return;
+        }
+        if (status.duration && status.duration > 0) {
+          this.clock.durationMs = Math.round(status.duration * 1000);
+        }
+        if (status.isLoaded) {
+          finish();
+        }
+      });
+
+      timeoutHandle = setTimeout(() => {
+        // If native is still buffering or ready on live property, allow load() to finish;
+        // if an error exists, surface it cleanly.
+        const currentError = (player as any).currentStatus?.error;
+        if (currentError) {
+          finish(new Error(currentError));
+        } else {
+          finish();
+        }
+      }, ExpoAudioEngine.NATIVE_PREPARE_TIMEOUT_MS);
+
+      // Re-check synchronously in case state transitioned before addListener attached
+      if (player.isLoaded) {
+        finish();
+      } else if ((player as any).currentStatus?.error) {
+        finish(new Error((player as any).currentStatus.error));
+      }
+    });
   }
 
   private clearSeekSafetyTimeout(): void {
@@ -199,6 +304,7 @@ export class ExpoAudioEngine implements AudioEngine {
 
       // Clean up previous player instance if any
       this.cleanupPlayer();
+      await this.ensureAudioModeConfigured();
 
       // Reset seek queue
       this.isSeekingNative = false;
@@ -215,13 +321,14 @@ export class ExpoAudioEngine implements AudioEngine {
       const nativeSource = this.resolveSource(source);
 
       // Create new player with 50ms update interval for tight sensory synchronization
-      this.player = createAudioPlayer(nativeSource, {
+      const createdPlayer = createAudioPlayer(nativeSource, {
         updateInterval: 50,
         keepAudioSessionActive: true,
       });
+      this.player = createdPlayer;
 
       // Subscribe to real-time status updates from native player
-      this.statusSubscription = this.player.addListener(
+      this.statusSubscription = createdPlayer.addListener(
         'playbackStatusUpdate',
         (status: AudioStatus) => {
           this.handleNativeStatusUpdate(status);
@@ -231,6 +338,14 @@ export class ExpoAudioEngine implements AudioEngine {
       // Pre-populate duration if provided in input
       if (typeof source === 'object' && source !== null && 'durationMs' in source && source.durationMs) {
         this.clock.durationMs = source.durationMs;
+      }
+
+      // Wait for native media extractor / codec readiness when preparing asynchronously
+      if (createdPlayer.isLoaded === false) {
+        await this.waitForNativePreparation(createdPlayer);
+      }
+      if (this.player !== createdPlayer) {
+        return;
       }
 
       // Initial transition to paused (ready to play)
@@ -713,6 +828,11 @@ export class ExpoAudioEngine implements AudioEngine {
       this.statusSubscription = null;
     }
     if (this.player) {
+      try {
+        this.player.pause();
+      } catch {
+        // Ignore pause errors on already-stopped/unloaded players
+      }
       try {
         this.player.remove();
       } catch (e) {

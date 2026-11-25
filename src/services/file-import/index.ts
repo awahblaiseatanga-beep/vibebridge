@@ -20,3 +20,5 @@ export interface FileImportService {
   pickAudioFile(): Promise<ImportedAudioResult | null>;
   validateFile(uri: string): Promise<boolean>;
 }
+
+export * from './NativeFileImportService';

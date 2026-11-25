@@ -44,3 +44,6 @@ Thumbs.db
 # generated native folders
 /ios
 /android
+
+# Local debugging artifacts
+/scratch/dump.js

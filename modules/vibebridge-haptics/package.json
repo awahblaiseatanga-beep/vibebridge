@@ -1,0 +1,6 @@
+{
+  "name": "vibebridge-haptics",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local Expo native Android module foundation for Vibrator/VibratorManager capability inspection and adaptive waveform rendering."
+}

@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Image,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -15,18 +16,16 @@ import { usePlayback } from '@/features/playback';
 import { useHaptics } from '@/features/haptics';
 import { useVisualizer } from '@/features/visualizer';
 import { formatMilliseconds } from '@/utils';
-import { eventScheduler } from '@/engines/event-scheduler';
-import { scheduleDemoTrackSensoryCues } from '@/features/rhythm';
-import { hapticEngine } from '@/engines/haptic';
-import { lyricsEngine } from '@/engines/lyrics';
-import { DEMO_TRACK_LYRICS } from '@/features/lyrics';
+import { useLocalMusicLibrary } from '@/features/library';
+import { BUNDLED_SPHERES_TRACK } from '@/services/tracks';
+import { isTrackPlayable } from '@/types';
 
 const spheresArtwork = require('../../assets/images/player/spheres-album-art.png');
-const DEMO_AUDIO_ASSET = require('../../assets/music/vibebridge_demo.wav');
 
 export default function StandardMusicPlayerScreen() {
   const router = useRouter();
   const { colors, isDark } = useAppTheme();
+  const playback = usePlayback();
   const {
     positionMs,
     durationMs,
@@ -40,8 +39,9 @@ export default function StandardMusicPlayerScreen() {
     pause,
     resume,
     seek,
-  } = usePlayback();
+  } = playback;
 
+  const { activeTrack, loadedTrackId, loadTrack, playTrack } = useLocalMusicLibrary();
   const { enabled: hapticsEnabled, toggleEnabled: toggleHaptics, triggerTest } = useHaptics();
   const {
     enabled: visualEnabled,
@@ -56,32 +56,15 @@ export default function StandardMusicPlayerScreen() {
   const [activeTransient, setActiveTransient] = useState<'kick' | 'snare' | null>(null);
   const [scrubberWidth, setScrubberWidth] = useState(300);
 
-  // Auto-load demo track and register sensory cues provider
+  // Load active track cleanly in paused state if needed and only when track is Ready to Play
   useEffect(() => {
-    eventScheduler.setScoreProvider((scheduler, rev) => {
-      hapticEngine.reset();
-      scheduleDemoTrackSensoryCues(scheduler, rev);
-    });
-
-    if (timelineRevision > 0) {
-      hapticEngine.reset();
-      scheduleDemoTrackSensoryCues(eventScheduler, timelineRevision);
+    if (!isTrackPlayable(activeTrack.analysisStatus)) return;
+    if (isIdle || (loadedTrackId !== activeTrack.id && !isPlaying)) {
+      loadTrack(activeTrack, playback).catch((e) =>
+        console.warn('Player auto-load notice:', e)
+      );
     }
-
-    if (isIdle) {
-      lyricsEngine.loadLyrics(DEMO_TRACK_LYRICS);
-      load({
-        type: 'bundle',
-        assetId: DEMO_AUDIO_ASSET,
-        name: 'Spheres',
-        durationMs: 12000,
-      }).catch((e) => console.warn('Player auto-load notice:', e));
-    }
-
-    return () => {
-      eventScheduler.setScoreProvider(null);
-    };
-  }, [isIdle, load, timelineRevision]);
+  }, [isIdle, isPlaying, loadedTrackId, loadTrack, activeTrack]);
 
   // Synchronize live visual transients and beats with authoritative rhythm engine
   useEffect(() => {
@@ -108,37 +91,30 @@ export default function StandardMusicPlayerScreen() {
   }, [onVisualCue]);
 
   const handlePlayPause = async () => {
+    if (!isTrackPlayable(activeTrack.analysisStatus)) {
+      Alert.alert(
+        'Track Not Ready',
+        `"${activeTrack.title}" is currently ${activeTrack.analysisStatus}. Please wait until analysis is Ready to Play.`
+      );
+      return;
+    }
     if (isPlaying) {
       await pause();
     } else {
-      if (isIdle) {
-        lyricsEngine.loadLyrics(DEMO_TRACK_LYRICS);
-        await load({
-          type: 'bundle',
-          assetId: DEMO_AUDIO_ASSET,
-          name: 'Spheres',
-          durationMs: 12000,
-        });
-      }
-      if (isPaused || isStopped) {
-        if (isStopped && durationMs > 0 && positionMs >= durationMs) {
-          await seek(0);
-        }
-        await resume();
-      } else {
-        await play();
-      }
+      await playTrack(activeTrack, playback);
     }
   };
 
   const handleScrubberPress = (e: any) => {
     const locX = e.nativeEvent.locationX;
     const ratio = Math.max(0, Math.min(1, locX / (scrubberWidth || 300)));
-    const targetMs = ratio * (durationMs || 12000);
+    const targetMs = ratio * (durationMs || activeTrack.durationMs || 12000);
     seek(targetMs);
   };
 
-  const progressPercent = durationMs > 0 ? Math.min(100, Math.max(0, (positionMs / durationMs) * 100)) : 0;
+  const effectiveDuration = durationMs || activeTrack.durationMs || 12000;
+  const progressPercent = effectiveDuration > 0 ? Math.min(100, Math.max(0, (positionMs / effectiveDuration) * 100)) : 0;
+  const isSpheres = activeTrack.id === BUNDLED_SPHERES_TRACK.id;
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background.base }]}>
@@ -154,8 +130,12 @@ export default function StandardMusicPlayerScreen() {
         </TouchableOpacity>
 
         <View style={styles.headerTitleCol}>
-          <Text style={[styles.headerSub, { color: colors.text.secondary }]}>PLAYING FROM ALBUM</Text>
-          <Text style={[styles.headerTitle, { color: colors.text.primary }]}>Spheres</Text>
+          <Text style={[styles.headerSub, { color: colors.text.secondary }]}>
+            {activeTrack.isLocalImport ? 'PLAYING FROM LOCAL STORAGE' : 'PLAYING FROM ALBUM'}
+          </Text>
+          <Text style={[styles.headerTitle, { color: colors.text.primary }]} numberOfLines={1}>
+            {activeTrack.album || (activeTrack.isLocalImport ? 'Device Music' : 'Spheres')}
+          </Text>
         </View>
 
         <TouchableOpacity
@@ -172,18 +152,47 @@ export default function StandardMusicPlayerScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* 1. Large, Dominant Album Artwork */}
+        {/* 1. Large, Dominant Album / Audio Artwork */}
         <View style={styles.artworkSection}>
           <View style={[styles.artworkFrame, { borderColor: colors.border.subtle, backgroundColor: colors.background.secondary }]}>
-            <Image
-              source={spheresArtwork}
-              style={styles.artworkImg}
-              resizeMode="cover"
-              accessibilityLabel="Spheres by Halina Rice album cover"
-            />
+            {isSpheres ? (
+              <Image
+                source={spheresArtwork}
+                style={styles.artworkImg}
+                resizeMode="cover"
+                accessibilityLabel="Spheres by Halina Rice album cover"
+              />
+            ) : (
+              <View style={[styles.customArtworkCenter, { backgroundColor: colors.background.elevated }]}>
+                <Text style={styles.customArtworkIcon}>🎧</Text>
+                <Text style={[styles.customArtworkMime, { color: colors.accent.secondary }]}>
+                  {activeTrack.mimeType?.toUpperCase() || 'AUDIO'}
+                </Text>
+              </View>
+            )}
+
             <View style={styles.bpmBadge}>
-              <View style={[styles.pulseDot, { backgroundColor: colors.accent.secondary }]} />
-              <Text style={styles.bpmBadgeText}>120 BPM</Text>
+              <View
+                style={[
+                  styles.pulseDot,
+                  {
+                    backgroundColor: isTrackPlayable(activeTrack.analysisStatus)
+                      ? colors.accent.secondary
+                      : activeTrack.analysisStatus === 'failed'
+                      ? '#EB5757'
+                      : '#EB943B',
+                  },
+                ]}
+              />
+              <Text style={styles.bpmBadgeText}>
+                {activeTrack.bpm
+                  ? `${activeTrack.bpm} BPM`
+                  : isTrackPlayable(activeTrack.analysisStatus)
+                  ? 'Ready to Play'
+                  : activeTrack.analysisStatus === 'failed'
+                  ? 'Analysis Incomplete'
+                  : 'Analyzing Audio...'}
+              </Text>
             </View>
           </View>
         </View>
@@ -191,8 +200,12 @@ export default function StandardMusicPlayerScreen() {
         {/* 2. Song Metadata & Favorite */}
         <View style={styles.metaRow}>
           <View style={styles.metaCol}>
-            <Text style={[styles.trackName, { color: colors.text.primary }]}>Spheres</Text>
-            <Text style={[styles.trackArtist, { color: colors.text.secondary }]}>Halina Rice • 2020 Single</Text>
+            <Text style={[styles.trackName, { color: colors.text.primary }]} numberOfLines={1}>
+              {activeTrack.title}
+            </Text>
+            <Text style={[styles.trackArtist, { color: colors.text.secondary }]} numberOfLines={1}>
+              {activeTrack.artist} • {activeTrack.isLocalImport ? 'Imported Track' : '2020 Single'}
+            </Text>
           </View>
           <TouchableOpacity
             style={[styles.favoriteBtn, { backgroundColor: colors.background.secondary, borderColor: colors.border.subtle }]}
@@ -203,7 +216,66 @@ export default function StandardMusicPlayerScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* 3. Scrubber & Timestamps */}
+        {/* 3. Dynamic Tactile Sync Status Card */}
+        <Card variant="surface" radius="large" style={styles.syncStatusCard}>
+          <View style={styles.syncStatusHeader}>
+            <View
+              style={[
+                styles.syncIconBox,
+                {
+                  backgroundColor: isTrackPlayable(activeTrack.analysisStatus)
+                    ? 'rgba(21, 158, 152, 0.15)'
+                    : activeTrack.analysisStatus === 'failed'
+                    ? 'rgba(235, 87, 87, 0.15)'
+                    : 'rgba(70, 87, 213, 0.15)',
+                },
+              ]}
+            >
+              <Text style={{ fontSize: 16 }}>
+                {isTrackPlayable(activeTrack.analysisStatus)
+                  ? '⚡'
+                  : activeTrack.analysisStatus === 'failed'
+                  ? '⚠️'
+                  : '⏳'}
+              </Text>
+            </View>
+            <View style={styles.syncStatusTextCol}>
+              <Text style={[styles.syncStatusTitle, { color: colors.text.primary }]}>
+                {isTrackPlayable(activeTrack.analysisStatus)
+                  ? `Tactile Rhythm Sync: ${activeTrack.bpm ? `${activeTrack.bpm} BPM` : 'Ready'}`
+                  : activeTrack.analysisStatus === 'failed'
+                  ? 'Analysis Incomplete (Tap Retry on Home)'
+                  : 'Acoustic Signal Processing in Progress...'}
+              </Text>
+              <Text style={[styles.syncStatusNote, { color: colors.text.secondary }]}>
+                {activeTrack.summaryNote ||
+                  (isTrackPlayable(activeTrack.analysisStatus)
+                    ? 'High-confidence beat grid aligned with downbeats and backbeats.'
+                    : 'Full-track acoustic processing and sensory timeline generation.')}
+              </Text>
+            </View>
+          </View>
+
+          {activeTrack.rhythmicChanges && activeTrack.rhythmicChanges.length > 0 && (
+            <View style={styles.sectionChipsRow}>
+              {activeTrack.rhythmicChanges.map((change, idx) => (
+                <View
+                  key={idx}
+                  style={[
+                    styles.sectionChip,
+                    { backgroundColor: colors.background.secondary, borderColor: colors.border.subtle },
+                  ]}
+                >
+                  <Text style={[styles.sectionChipText, { color: colors.accent.secondary }]}>
+                    🏷️ {change}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </Card>
+
+        {/* 4. Scrubber & Timestamps */}
         <View style={styles.scrubberSection}>
           <TouchableOpacity
             style={[styles.scrubberTrack, { backgroundColor: colors.background.secondary }]}
@@ -230,12 +302,12 @@ export default function StandardMusicPlayerScreen() {
               {formatMilliseconds(positionMs)}
             </Text>
             <Text style={[styles.timeText, { color: colors.text.secondary }]}>
-              {formatMilliseconds(durationMs || 12000)}
+              {formatMilliseconds(effectiveDuration)}
             </Text>
           </View>
         </View>
 
-        {/* 4. Main Playback Controls */}
+        {/* 5. Main Playback Controls */}
         <View style={styles.controlsRow}>
           <TouchableOpacity style={styles.controlBtn} accessibilityLabel="Shuffle">
             <Text style={[styles.controlIconSecondary, { color: colors.text.secondary }]}>🔀</Text>
@@ -251,16 +323,27 @@ export default function StandardMusicPlayerScreen() {
 
           {/* Prominent Play / Pause */}
           <TouchableOpacity
-            style={[styles.mainPlayBtn, { backgroundColor: colors.accent.primary }]}
+            style={[
+              styles.mainPlayBtn,
+              {
+                backgroundColor: isTrackPlayable(activeTrack.analysisStatus)
+                  ? colors.accent.primary
+                  : colors.background.elevated,
+                opacity: isTrackPlayable(activeTrack.analysisStatus) ? 1 : 0.6,
+              },
+            ]}
             onPress={handlePlayPause}
             accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
+            disabled={!isTrackPlayable(activeTrack.analysisStatus)}
           >
-            <Text style={styles.mainPlayIcon}>{isPlaying ? '⏸' : '▶'}</Text>
+            <Text style={styles.mainPlayIcon}>
+              {isPlaying ? '⏸' : isTrackPlayable(activeTrack.analysisStatus) ? '▶' : '⏳'}
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.controlBtn}
-            onPress={() => seek((positionMs + 3000) % (durationMs || 12000))}
+            onPress={() => seek((positionMs + 3000) % effectiveDuration)}
             accessibilityLabel="Next track"
           >
             <Text style={[styles.controlIconPrimary, { color: colors.text.primary }]}>⏭</Text>
@@ -271,7 +354,7 @@ export default function StandardMusicPlayerScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* 5. SEE — Visual Rhythm Preview Card */}
+        {/* 6. SEE — Visual Rhythm Preview Card */}
         <Card variant="surface" radius="large" style={styles.featureCard}>
           <View style={styles.cardHeaderRow}>
             <View style={styles.cardHeaderLeft}>
@@ -310,7 +393,7 @@ export default function StandardMusicPlayerScreen() {
           <View style={[styles.previewCanvas, { backgroundColor: colors.background.elevated, borderColor: colors.border.subtle }]}>
             <View style={styles.previewCanvasHeader}>
               <Text style={[styles.canvasMetaText, { color: colors.text.secondary }]}>
-                {`Bar ${currentBar} • 4/4 • 120 BPM`}
+                {`Bar ${currentBar} • 4/4 • ${activeTrack.bpm ? `${activeTrack.bpm} BPM` : 'Adaptive'}`}
               </Text>
               <View style={styles.transientPillRow}>
                 <Text
@@ -416,7 +499,7 @@ export default function StandardMusicPlayerScreen() {
           />
         </Card>
 
-        {/* 6. FEEL — Tactile Haptics Control Card */}
+        {/* 7. FEEL — Tactile Haptics Control Card */}
         <Card variant="surface" radius="large" style={styles.featureCard}>
           <View style={styles.hapticRow}>
             <View style={styles.hapticLeft}>
@@ -504,6 +587,8 @@ const styles = StyleSheet.create({
   headerTitleCol: {
     alignItems: 'center',
     justifyContent: 'center',
+    flex: 1,
+    marginHorizontal: 10,
   },
   headerSub: {
     fontSize: 10,
@@ -543,6 +628,21 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
+  customArtworkCenter: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  customArtworkIcon: {
+    fontSize: 72,
+  },
+  customArtworkMime: {
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 2,
+    marginTop: 10,
+  },
   bpmBadge: {
     position: 'absolute',
     bottom: 12,
@@ -571,7 +671,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 16,
+    marginBottom: 14,
   },
   metaCol: {
     flex: 1,
@@ -597,6 +697,53 @@ const styles = StyleSheet.create({
   },
   favoriteEmoji: {
     fontSize: 18,
+  },
+  syncStatusCard: {
+    padding: 14,
+    marginBottom: 16,
+  },
+  syncStatusHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  syncIconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  syncStatusTextCol: {
+    flex: 1,
+    marginLeft: 10,
+  },
+  syncStatusTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  syncStatusNote: {
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 2,
+  },
+  sectionChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  sectionChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  sectionChipText: {
+    fontSize: 10,
+    fontWeight: '600',
   },
   scrubberSection: {
     marginBottom: 20,

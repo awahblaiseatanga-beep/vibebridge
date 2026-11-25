@@ -43,9 +43,11 @@ export class AudioSignalFoundation {
   }
 
   public reset(): void {
+    this.sampleRate = 48000;
     this.processor.reset();
     this.energyCalculator.reset();
     this.onsetDetector.reset();
+    this.onsetDetector.setSampleRate(48000);
     this.activeCandidates.clear();
   }
 
@@ -81,6 +83,7 @@ export class AudioSignalFoundation {
     encoding: 'float32' | 'int16' = 'float32'
   ): CandidateOnsetObservation[] {
     this.sampleRate = metadata.sampleRate > 0 ? metadata.sampleRate : this.sampleRate;
+    this.onsetDetector.setSampleRate(this.sampleRate);
     const floatSamples = this.decodeToMonoFloat(data, metadata.channelCount, encoding);
 
     const emittedCandidates: CandidateOnsetObservation[] = [];

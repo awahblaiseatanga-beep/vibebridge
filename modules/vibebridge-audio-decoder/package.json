@@ -1,0 +1,6 @@
+{
+  "name": "vibebridge-audio-decoder",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local Expo native Android module foundation for MediaExtractor/MediaCodec audio decoding."
+}

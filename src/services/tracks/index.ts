@@ -17,3 +17,5 @@ export interface TrackService {
   saveTrack(track: TrackMetadata): Promise<void>;
   deleteTrack(id: string): Promise<void>;
 }
+
+export * from './LocalTrackRepository';

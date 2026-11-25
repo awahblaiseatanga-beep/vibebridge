@@ -20,6 +20,7 @@ import {
   IEventScheduler,
   InternalScheduledEvent,
   ScoreProvider,
+  WindowedScoreProvider,
 } from './types';
 
 /**
@@ -54,6 +55,11 @@ export class PriorityEventScheduler implements IEventScheduler {
 
   // Synchronous score provider callback invoked immediately upon timeline revision change
   private scoreProvider: ScoreProvider | null = null;
+  // Rolling look-ahead score provider invoked on revision change and replenished during tick()
+  private windowedScoreProvider: WindowedScoreProvider | null = null;
+  private rollingWindowMs = 15000;
+  private replenishThresholdMs = 5000;
+  private fedHorizonMs = -1;
 
   // Single controlled loop handle
   private timerHandle: ReturnType<typeof setInterval> | null = null;
@@ -122,6 +128,7 @@ export class PriorityEventScheduler implements IEventScheduler {
   private handleRevisionChange(newRevision: number): void {
     this.clearStagedTimer();
     this.currentRevision = newRevision;
+    this.fedHorizonMs = -1;
     // Clear history of past dispatched IDs for the previous revision
     this.dispatchedIds.clear();
     // Drop all events with outdated timeline revision
@@ -131,6 +138,34 @@ export class PriorityEventScheduler implements IEventScheduler {
     if (this.scoreProvider && newRevision > 0) {
       this.scoreProvider(this, newRevision);
     }
+
+    // Or populate initial rolling look-ahead window if a windowed provider is registered
+    if (this.windowedScoreProvider && newRevision > 0) {
+      const currentPos = Math.max(0, this.masterClock.getEstimatedPositionMs());
+      this.replenishWindow(currentPos, newRevision);
+    }
+  }
+
+  private replenishWindow(currentPositionMs: number, revision: number): void {
+    if (!this.windowedScoreProvider || revision <= 0) return;
+
+    const clock = this.masterClock.getClock();
+    if (clock.durationMs > 0 && this.fedHorizonMs >= clock.durationMs) {
+      return;
+    }
+
+    const windowStart =
+      this.fedHorizonMs >= 0
+        ? this.fedHorizonMs
+        : Math.max(0, currentPositionMs - this.maxLatenessToleranceMs);
+    const targetEnd = currentPositionMs + this.rollingWindowMs;
+    const windowEnd =
+      clock.durationMs > 0 ? Math.min(targetEnd, clock.durationMs + 1) : targetEnd;
+
+    if (windowEnd <= windowStart) return;
+
+    this.fedHorizonMs = windowEnd;
+    this.windowedScoreProvider(this, revision, windowStart, windowEnd);
   }
 
   /**
@@ -140,6 +175,35 @@ export class PriorityEventScheduler implements IEventScheduler {
    */
   public setScoreProvider(provider: ScoreProvider | null): void {
     this.scoreProvider = provider;
+    if (provider) {
+      this.windowedScoreProvider = null;
+      this.fedHorizonMs = -1;
+    }
+  }
+
+  /**
+   * Register a rolling look-ahead score provider that feeds events in windows
+   * and continuously replenishes upcoming events as playback advances.
+   */
+  public setWindowedScoreProvider(
+    provider: WindowedScoreProvider | null,
+    windowMs: number = 15000,
+    replenishThresholdMs: number = 5000
+  ): void {
+    this.windowedScoreProvider = provider;
+    this.rollingWindowMs = Math.max(2000, windowMs);
+    this.replenishThresholdMs = Math.max(500, Math.min(replenishThresholdMs, this.rollingWindowMs - 500));
+    this.fedHorizonMs = -1;
+    if (provider) {
+      this.scoreProvider = null;
+      const clock = this.masterClock.getClock();
+      if (clock.timelineRevision > 0) {
+        this.currentRevision = clock.timelineRevision;
+        this.events = this.events.filter((e) => e.timelineRevision === this.currentRevision);
+        const currentPos = Math.max(0, this.masterClock.getEstimatedPositionMs());
+        this.replenishWindow(currentPos, this.currentRevision);
+      }
+    }
   }
 
   /**
@@ -343,6 +407,16 @@ export class PriorityEventScheduler implements IEventScheduler {
     // Do not fire events after the track has ended
     if (clock.durationMs > 0 && currentPosition >= clock.durationMs) {
       return [];
+    }
+
+    // Continuously replenish rolling look-ahead window before dispatching due events
+    if (
+      this.windowedScoreProvider &&
+      this.currentRevision > 0 &&
+      (this.fedHorizonMs < 0 ||
+        currentPosition + this.replenishThresholdMs >= this.fedHorizonMs)
+    ) {
+      this.replenishWindow(currentPosition, this.currentRevision);
     }
 
     const monotonicNow =

@@ -44,12 +44,29 @@ export interface InternalScheduledEvent<T = unknown> {
 
 export type ScoreProvider = (scheduler: IEventScheduler, timelineRevision: number) => void;
 
+export type WindowedScoreProvider = (
+  scheduler: IEventScheduler,
+  timelineRevision: number,
+  windowStartMs: number,
+  windowEndMs: number
+) => void;
+
 export interface IEventScheduler {
   /**
    * Register a synchronous score provider that automatically rebuilds sensory cues
    * whenever the timeline revision changes (e.g. seek, track load, stop).
    */
   setScoreProvider(provider: ScoreProvider | null): void;
+
+  /**
+   * Register a rolling look-ahead score provider that replenishes events continuously
+   * across tracks of arbitrary duration without loading thousands of events upfront.
+   */
+  setWindowedScoreProvider?(
+    provider: WindowedScoreProvider | null,
+    windowMs?: number,
+    replenishThresholdMs?: number
+  ): void;
 
   /**
    * Schedule a timestamped sensory event.

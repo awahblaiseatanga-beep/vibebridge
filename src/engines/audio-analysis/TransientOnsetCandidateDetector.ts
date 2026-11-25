@@ -49,7 +49,7 @@ export class TransientOnsetCandidateDetector {
 
   // Actuator/Acoustic refractory spacing (70 ms minimum between detected candidates)
   private lastConfirmedSample = -100000;
-  private static readonly REFRACTORY_SAMPLES = 48000 * 0.035; // 35 ms minimum spacing
+  private sampleRate = 48000;
 
   constructor(config?: AudioSignalFoundationConfig) {
     this.attackWindowCorrectionSamples = config?.attackWindowCorrectionSamples ?? 4;
@@ -58,8 +58,15 @@ export class TransientOnsetCandidateDetector {
     this.envelopeWindowSize = config?.envelopeWindowSize ?? 32;
   }
 
+  public setSampleRate(sampleRate: number): void {
+    if (sampleRate > 0) {
+      this.sampleRate = sampleRate;
+    }
+  }
+
   public reset(): void {
     this.candidateIdCounter = 0;
+    this.sampleRate = 48000;
     this.baselineMean = 0.02;
     this.baselineDev = 0.01;
     this.prevRms = 0;
@@ -125,7 +132,7 @@ export class TransientOnsetCandidateDetector {
 
     // 5. Check if Current Frame is a Candidate Peak (ODF > threshold and ODF >= prevOdf)
     const timeSinceLast = frame.globalSamplePosition - this.lastConfirmedSample;
-    const isAboveRefractory = timeSinceLast >= TransientOnsetCandidateDetector.REFRACTORY_SAMPLES;
+    const isAboveRefractory = timeSinceLast >= this.sampleRate * 0.035;
     const isAboveSilence = frame.rms > this.silenceThreshold;
 
     if (odf > threshold && odf >= this.prevOdf && isAboveRefractory && isAboveSilence) {
@@ -183,7 +190,7 @@ export class TransientOnsetCandidateDetector {
     );
 
     const surgeRatio = Math.max(0, candidate.odfValue - candidate.threshold) / Math.max(candidate.threshold, 0.01);
-    const estimatedOnsetTimeSec = estimatedOnsetSample / (frame.rms > 0 ? 48000 : 48000);
+    const estimatedOnsetTimeSec = estimatedOnsetSample / (this.sampleRate > 0 ? this.sampleRate : 48000);
 
     return {
       id: ++this.candidateIdCounter,

@@ -15,6 +15,59 @@ export interface SensoryPillarConfig {
 
 export type PlaybackStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'stopped' | 'error';
 
+/**
+ * Authoritative Track Lifecycle States:
+ * importing -> decoding -> analyzing -> saving -> ready -> playing
+ * Also includes 'failed' (explicit error with retry) and legacy 'complete' / 'fallback' aliases.
+ */
+export type TrackAnalysisStatus =
+  | 'none'
+  | 'importing'
+  | 'decoding'
+  | 'analyzing'
+  | 'saving'
+  | 'ready'
+  | 'playing'
+  | 'failed'
+  | 'fallback'
+  | 'complete';
+
+export function isTrackPlayable(status?: TrackAnalysisStatus): boolean {
+  return status === 'ready' || status === 'complete' || status === 'playing';
+}
+
+export interface TrackProcessingProgress {
+  trackId: string;
+  stage: 'importing' | 'decoding' | 'analyzing' | 'saving' | 'ready' | 'failed';
+  processedDurationMs: number;
+  totalDurationMs: number;
+  percent: number; // 0.0 - 1.0 (or -1 if indeterminate)
+  sampleRate?: number;
+  channelCount?: number;
+  totalSamplesDecoded?: number;
+  detailMessage: string;
+  error?: string;
+}
+
+export interface SensoryTimeline {
+  version: 1;
+  trackId: string;
+  durationMs: number;
+  sampleRate: number;
+  channelCount: number;
+  bpm: number;
+  bpmConfidence: number; // 0.0 - 1.0
+  energyConfidence: number; // 0.0 - 1.0 (independent from bpmConfidence)
+  onsetConfidence: number; // 0.0 - 1.0 (independent from bpmConfidence)
+  timeSignature: '4/4' | '3/4';
+  energyEnvelope: number[]; // 500ms bins normalized [0..1]
+  cues: any[]; // CanonicalRhythmCue[] driving FEEL & SEE
+  rhythmicChanges: string[];
+  summaryNote: string;
+  timelinePath?: string;
+  createdAt: string;
+}
+
 export interface TrackMetadata {
   id: string;
   title: string;
@@ -27,6 +80,18 @@ export interface TrackMetadata {
   hasHapticTrack: boolean;
   hasVisualBeats: boolean;
   importedAt: string;
+  fileSizeBytes?: number;
+  mimeType?: string;
+  isLocalImport?: boolean;
+  analysisStatus?: TrackAnalysisStatus;
+  bpm?: number;
+  bpmConfidence?: number; // 0.0 - 1.0
+  energyConfidence?: number; // 0.0 - 1.0
+  onsetConfidence?: number; // 0.0 - 1.0
+  rhythmScore?: any[];
+  rhythmicChanges?: string[];
+  summaryNote?: string;
+  timelinePath?: string;
 }
 
 export interface LyricLine {

@@ -8,3 +8,5 @@ export * from './SlidingWindowFrameProcessor';
 export * from './SubBandEnergyCalculator';
 export * from './TransientOnsetCandidateDetector';
 export * from './AudioSignalFoundation';
+export * from './AutomaticRhythmAnalyzer';
+export * from './FullTrackSensoryPipeline';

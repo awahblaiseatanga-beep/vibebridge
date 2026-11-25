@@ -309,9 +309,11 @@ export class VisualRhythmEngine implements IVisualRhythmEngine {
     this.currentRevision = initialSnapshot.timelineRevision;
     this.state.isPaused = initialSnapshot.status !== 'playing';
     this.state.isBuffering = initialSnapshot.isBuffering;
+    const initialEndRestThreshold =
+      initialSnapshot.durationMs > 200 ? initialSnapshot.durationMs - 200 : initialSnapshot.durationMs;
     this.state.isRest =
       initialSnapshot.status !== 'playing' ||
-      (initialSnapshot.durationMs > 0 && initialSnapshot.positionMs >= 11800);
+      (initialSnapshot.durationMs > 0 && initialSnapshot.positionMs >= initialEndRestThreshold);
 
     this.clockStatusUnsubscribe = clock.onStatusChange((status) => {
       this.state.isPaused = status !== 'playing';
@@ -360,15 +362,14 @@ export class VisualRhythmEngine implements IVisualRhythmEngine {
         return;
       }
 
-      // 3. Musical Rest Check (between Bar 6 resolution completion at 11800ms and track loop/end at 12000ms)
-      // The Bar 6 Beat 4 resolution cue triggers at ~11484ms with a 300ms envelope (40ms attack + 260ms decay),
-      // completing at 11784ms (11800ms audio timeline position).
-      // Transition to resting state occurs strictly AFTER the 300ms resolution animation envelope has fully finished:
+      // 3. Musical Rest Check near the end of any track (strictly after resolution envelope completes)
+      const endRestThresholdMs =
+        clockSnapshot.durationMs > 200 ? clockSnapshot.durationMs - 200 : clockSnapshot.durationMs;
       if (
         clockSnapshot.status === 'playing' &&
         !clockSnapshot.isBuffering &&
         clockSnapshot.durationMs > 0 &&
-        clockSnapshot.positionMs >= 11800 &&
+        clockSnapshot.positionMs >= endRestThresholdMs &&
         !this.state.isRest
       ) {
         this.state.isRest = true;

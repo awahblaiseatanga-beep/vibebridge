@@ -14,3 +14,5 @@ export interface LibraryFilterOptions {
   onlyWithLyrics?: boolean;
   onlyWithHaptics?: boolean;
 }
+
+export * from './useLocalMusicLibrary';
